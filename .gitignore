@@ -1,0 +1,27 @@
+# Artefactos descarregados por Setup-WebView2.ps1
+/lib/
+
+# Artefactos descarregados por Setup-OfflineAssets.ps1
+/webui/assets/vendor/
+/webui/assets/fonts/
+
+# Builds / releases
+/release/
+*.zip
+
+# Logs e temporarios
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Bundle local do Claude Design (ja temos a copia em webui/)
+/IT Admin/
+
+# PowerShell Gallery cache
+*.nupkg
+
+# Old non-web version (optional - remove se queres guardar)
+# /ITAdminToolkit.ps1
+# /ITAdminToolkit.bat
+# /Launch-NoConsole.vbs

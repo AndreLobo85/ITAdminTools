@@ -1,0 +1,15 @@
+{
+  "version": "1.0.0",
+  "releaseName": "IT Admin Toolkit - Initial release",
+  "releaseDate": "2026-04-20",
+  "minWindows": "10.0.17763",
+  "requires": {
+    "webView2Runtime": true,
+    "powershell": "5.1"
+  },
+  "changelog": [
+    "Dashboard-first UI (design Claude novobanco)",
+    "5 ferramentas: UserInfo, GroupInfo, ADGroupAuditor, ShareAuditor, MailboxStats",
+    "SharePoint Site Members (PnP.PowerShell)"
+  ]
+}
