@@ -74,19 +74,26 @@ function Invoke-ToolRequest {
             $username = if ($Params.username) { [string]$Params.username } else { '' }
             $email    = if ($Params.email) { [string]$Params.email } else { '' }
             if (-not $username -and -not $email) { throw 'Indique username ou email.' }
-            $info = UI_Get-UserInfo -Username $username -Email $email
-            if (-not $info) { return @{ lines = @('[WARN] User nao encontrado.') } }
-            $report = UI_Format-Report $info
-            return @{ lines = ($report -split "`r?`n") }
+            # Corre o script original get-diag-info-aw2.ps1 directamente
+            $scriptPath = Join-Path $ToolsDir 'scripts\get-diag-info-aw2.ps1'
+            if (-not (Test-Path $scriptPath)) { throw "Script nao encontrado: $scriptPath" }
+            $callArgs = @{}
+            if ($username) { $callArgs['userName'] = $username }
+            if ($email)    { $callArgs['email']    = $email }
+            $raw = & $scriptPath @callArgs *>&1
+            $lines = @($raw | ForEach-Object { "$_" })
+            return @{ lines = $lines }
         }
 
         'GroupInfo' {
             $g = [string]$Params.groupName
             if (-not $g) { throw 'Indique o nome do grupo.' }
-            $info = GI_Get-GroupInfo -GroupName $g
-            if (-not $info) { return @{ lines = @('[WARN] Grupo nao encontrado.') } }
-            $report = GI_Format-Report $info
-            return @{ lines = ($report -split "`r?`n") }
+            # Corre o script original get-diag-info-group.ps1 directamente
+            $scriptPath = Join-Path $ToolsDir 'scripts\get-diag-info-group.ps1'
+            if (-not (Test-Path $scriptPath)) { throw "Script nao encontrado: $scriptPath" }
+            $raw = & $scriptPath -groupName $g *>&1
+            $lines = @($raw | ForEach-Object { "$_" })
+            return @{ lines = $lines }
         }
 
         'ADGroupAuditor' {
