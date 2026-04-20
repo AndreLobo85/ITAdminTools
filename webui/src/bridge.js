@@ -29,25 +29,31 @@
     else p.reject(new Error(msg.error || 'erro desconhecido'));
   });
 
-  function send(type, payload) {
+  function send(type, payload, opts = {}) {
+    const timeoutMs = opts.timeoutMs ?? 180000; // 3 min default
     return new Promise((resolve, reject) => {
       const id = ++seq;
-      pending.set(id, { resolve, reject });
-      window.chrome.webview.postMessage({ id, type, ...payload });
-      // timeout de seguranca: 3 min (suficiente para LDAP+Exchange em corp networks)
-      setTimeout(() => {
+      const timer = timeoutMs > 0 ? setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
-          reject(new Error('timeout (180s) a executar ' + type));
+          reject(new Error('timeout (' + Math.round(timeoutMs/1000) + 's) a executar ' + type));
         }
-      }, 180000);
+      }, timeoutMs) : null;
+      pending.set(id, {
+        resolve: (v) => { if (timer) clearTimeout(timer); resolve(v); },
+        reject:  (e) => { if (timer) clearTimeout(timer); reject(e); }
+      });
+      window.chrome.webview.postMessage({ id, type, ...payload });
     });
   }
 
   window.bridge = {
     available: true,
-    runTool: (toolId, params) => send('RUN_TOOL', { toolId, params }),
-    getContext: () => send('GET_CONTEXT', {})
+    // Sem timeout do lado JS: o utilizador pode parar via cancelTool().
+    // O host PowerShell ja pode ser cancelado manualmente atraves do botao Stop.
+    runTool: (toolId, params) => send('RUN_TOOL', { toolId, params }, { timeoutMs: 0 }),
+    cancelTool: () => send('CANCEL_TOOL', {}, { timeoutMs: 5000 }),
+    getContext: () => send('GET_CONTEXT', {}, { timeoutMs: 5000 })
   };
 
   console.info('[bridge] Ligado ao host PowerShell.');

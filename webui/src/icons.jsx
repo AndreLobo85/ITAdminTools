@@ -16,6 +16,7 @@ const Icon = ({ name, size = 20, strokeWidth = 1.6 }) => {
     folder: <><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></>,
     device: <><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10 18h4"/></>,
     play: <><path d="M7 5l12 7-12 7V5z" fill="currentColor" stroke="none"/></>,
+    stop: <><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/></>,
     chevron: <><path d="M9 6l6 6-6 6"/></>,
     x: <><path d="M6 6l12 12M18 6L6 18"/></>,
     check: <><path d="M5 12l5 5L20 7"/></>,

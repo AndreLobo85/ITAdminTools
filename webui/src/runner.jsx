@@ -118,6 +118,7 @@ const Runner = ({ script, area, lang, onBack }) => {
     return init;
   });
   const [running, setRunning] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [outputLines, setOutputLines] = useState([]);
   const [confirmingDanger, setConfirmingDanger] = useState(false);
 
@@ -130,6 +131,7 @@ const Runner = ({ script, area, lang, onBack }) => {
     setFormValues(init);
     setOutputLines([]);
     setConfirmingDanger(false);
+    setStopping(false);
   }, [script.id]);
 
   const canRun = !running && (() => {
@@ -154,6 +156,7 @@ const Runner = ({ script, area, lang, onBack }) => {
 
   const doRun = async () => {
     setRunning(true);
+    setStopping(false);
     setOutputLines([]);
     setConfirmingDanger(false);
     try {
@@ -168,10 +171,31 @@ const Runner = ({ script, area, lang, onBack }) => {
         out = script.output(formValues);
       }
       setOutputLines(out);
-      setTimeout(() => setRunning(false), out.length * 180 + 200);
+      setTimeout(() => { setRunning(false); setStopping(false); }, out.length * 180 + 200);
     } catch (err) {
       setOutputLines(['[ERR] ' + (err && err.message ? err.message : err)]);
       setRunning(false);
+      setStopping(false);
+    }
+  };
+
+  const stop = async () => {
+    if (!running || stopping) return;
+    setStopping(true);
+    if (window.bridge && window.bridge.available && window.bridge.cancelTool) {
+      try {
+        await window.bridge.cancelTool();
+      } catch (err) {
+        // se o cancelamento falhar, mostra mas mantem o estado
+        setOutputLines(prev => [...prev, '[WARN] Cancelamento falhou: ' + (err.message || err)]);
+        setStopping(false);
+      }
+      // o doRun() ainda esta a aguardar pela resposta do runspace; quando o
+      // runspace parar, o resultado (com '[WARN] Execucao cancelada') chega.
+    } else {
+      // sem bridge: simulacao apenas para de "renderizar"
+      setRunning(false);
+      setStopping(false);
     }
   };
 
@@ -293,13 +317,18 @@ const Runner = ({ script, area, lang, onBack }) => {
                     {s.cancel}
                   </button>
                 </>
+              ) : running ? (
+                <button className="btn btn--danger" onClick={stop} disabled={stopping}>
+                  <Icon name="stop" size={14}/>
+                  {stopping ? s.stopping + '...' : s.stop}
+                </button>
               ) : (
                 <button className="btn btn--primary" onClick={run} disabled={!canRun}>
                   <Icon name="play" size={14}/>
-                  {running ? s.running + '...' : s.run}
+                  {s.run}
                 </button>
               )}
-              <button className="btn btn--ghost" onClick={() => setOutputLines([])} disabled={outputLines.length === 0}>
+              <button className="btn btn--ghost" onClick={() => setOutputLines([])} disabled={outputLines.length === 0 || running}>
                 <Icon name="x" size={14}/> {s.clear}
               </button>
             </div>

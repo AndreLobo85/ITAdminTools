@@ -1,6 +1,6 @@
 {
-  "version": "1.0.3",
-  "releaseName": "IT Admin Toolkit - use original scripts",
+  "version": "1.0.4",
+  "releaseName": "IT Admin Toolkit - cancellable runspaces + EXO role validation",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,8 +8,11 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "UserInfo e GroupInfo passam a invocar directamente os scripts originais (tools/scripts/get-diag-info-aw2.ps1 e get-diag-info-group.ps1), sem reimplementacao",
-    "Output do terminal na app e agora identico ao que teria no PowerShell a correr o script manualmente",
-    "Para actualizar os scripts no futuro, basta editar os ficheiros em tools/scripts/ (zero codigo envolvente)"
+    "Scripts agora correm em runspace separado: UI nao bloqueia, e e possivel cancelar a meio (botao Stop substitui Run durante execucao, equivalente a Ctrl+C no PowerShell)",
+    "Erros do PowerShell sao agora apresentados com detalhe (mensagem, posicao no script, CategoryInfo, FullyQualifiedErrorId) tal como apareceriam na consola PS",
+    "MailboxStats: pre-validacao via Microsoft Graph - so faz Connect-ExchangeOnline se o utilizador tiver Exchange Administrator (ou Global Admin / Recipient Admin / Global Reader) ACTIVA em PIM",
+    "Connect-ExchangeOnline e Connect-MgGraph correm fora da UI thread - popups de autenticacao aparecem visiveis e a aplicacao mantem-se responsive",
+    "JS bridge: timeout removido em RUN_TOOL (utilizador controla a duracao via Stop)",
+    "Pre-requisitos novos: modulo Microsoft.Graph.Authentication (Install-Module Microsoft.Graph.Authentication -Scope CurrentUser)"
   ]
 }

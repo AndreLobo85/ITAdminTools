@@ -63,6 +63,152 @@ foreach ($f in '_common.ps1','UserInfo.ps1','GroupInfo.ps1','ADGroupAuditor.ps1'
     . (Join-Path $ToolsDir $f)
 }
 
+# ========== Runspace runner: executa scripts em runspace separado (cancelavel) ==========
+$script:RunningPS = $null
+$script:RunningRS = $null
+
+function Format-PSErrorRecord {
+    param($ErrorRecord)
+    $out = @()
+    $msg = if ($ErrorRecord.Exception) { $ErrorRecord.Exception.Message } else { "$ErrorRecord" }
+    $out += "[ERR] $msg"
+    if ($ErrorRecord.InvocationInfo -and $ErrorRecord.InvocationInfo.PositionMessage) {
+        foreach ($l in ($ErrorRecord.InvocationInfo.PositionMessage -split "`r?`n")) {
+            if ($l.Trim()) { $out += "    $l" }
+        }
+    }
+    if ($ErrorRecord.CategoryInfo) {
+        $out += "    + CategoryInfo          : " + $ErrorRecord.CategoryInfo.ToString()
+    }
+    if ($ErrorRecord.FullyQualifiedErrorId) {
+        $out += "    + FullyQualifiedErrorId : " + $ErrorRecord.FullyQualifiedErrorId
+    }
+    if ($ErrorRecord.Exception -and $ErrorRecord.Exception.InnerException) {
+        $out += "    + InnerException        : " + $ErrorRecord.Exception.InnerException.Message
+    }
+    return $out
+}
+
+function Stop-RunningScript {
+    if ($script:RunningPS) {
+        Write-AppLog "CANCEL_TOOL: a parar runspace activo"
+        try { $script:RunningPS.BeginStop($null, $null) | Out-Null } catch { Write-AppLog "Stop falhou: $($_.Exception.Message)" }
+    } else {
+        Write-AppLog "CANCEL_TOOL: nenhum script em execucao"
+    }
+}
+
+function Invoke-ScriptInRunspace {
+    [CmdletBinding(DefaultParameterSetName='File')]
+    param(
+        [Parameter(Mandatory, ParameterSetName='File')][string]$ScriptPath,
+        [Parameter(Mandatory, ParameterSetName='Block')][scriptblock]$ScriptBlock,
+        [hashtable]$Parameters = @{}
+    )
+
+    # Garantir que so corre 1 script de cada vez
+    if ($script:RunningPS) {
+        try { $script:RunningPS.Stop() } catch {}
+        try { $script:RunningPS.Dispose() } catch {}
+        $script:RunningPS = $null
+    }
+    if ($script:RunningRS) {
+        try { $script:RunningRS.Close() } catch {}
+        try { $script:RunningRS.Dispose() } catch {}
+        $script:RunningRS = $null
+    }
+
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.ApartmentState = 'STA'
+    $rs.ThreadOptions  = 'ReuseThread'
+    $rs.Open()
+
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+
+    if ($PSCmdlet.ParameterSetName -eq 'File') {
+        # Chama o ficheiro .ps1 com parametros named
+        [void]$ps.AddCommand($ScriptPath)
+    } else {
+        # Executa um scriptblock literal (texto). Re-cria o scriptblock dentro
+        # do runspace para evitar capturar variaveis do scope-pai.
+        [void]$ps.AddScript($ScriptBlock.ToString())
+    }
+    foreach ($k in $Parameters.Keys) {
+        [void]$ps.AddParameter($k, $Parameters[$k])
+    }
+
+    $script:RunningPS = $ps
+    $script:RunningRS = $rs
+
+    $tag = if ($PSCmdlet.ParameterSetName -eq 'File') { $ScriptPath } else { '<scriptblock>' }
+    Write-AppLog "Runspace start: $tag  params=$($Parameters | ConvertTo-Json -Compress -Depth 5)"
+
+    $output = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
+    $async  = $ps.BeginInvoke($null, $output)
+
+    # Loop nao-bloqueante: pumpa UI ate completar (permite que CANCEL_TOOL chegue)
+    while (-not $async.IsCompleted) {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 40
+    }
+
+    $lines = @()
+    $threwTerminating = $null
+    try {
+        $finalOutput = $ps.EndInvoke($async)
+        if ($finalOutput) {
+            foreach ($o in $finalOutput) { $lines += "$o" }
+        } elseif ($output) {
+            foreach ($o in $output) { $lines += "$o" }
+        }
+    } catch {
+        $threwTerminating = $_
+        Write-AppLog "EndInvoke threw: $($_.Exception.Message)"
+        # EndInvoke lanca quando o runspace lanca terminating error ou foi parado
+        if ($output) {
+            foreach ($o in $output) { $lines += "$o" }
+        }
+    }
+
+    # Erros nao-terminantes que o script tenha emitido
+    if ($ps.Streams.Error -and $ps.Streams.Error.Count -gt 0) {
+        $lines += ''
+        foreach ($err in $ps.Streams.Error) {
+            $lines += (Format-PSErrorRecord $err)
+        }
+    }
+    if ($ps.Streams.Warning) {
+        foreach ($w in $ps.Streams.Warning) { $lines += "[WARN] $w" }
+    }
+    if ($ps.Streams.Information) {
+        foreach ($i in $ps.Streams.Information) { $lines += "$i" }
+    }
+
+    $state = $ps.InvocationStateInfo.State
+    $cancelled = ($state -eq 'Stopped' -or $state -eq 'Stopping')
+
+    # Terminating exception (com stack) — adiciona apos os erros stream
+    if ($threwTerminating -and -not $cancelled) {
+        $lines += ''
+        $lines += (Format-PSErrorRecord $threwTerminating)
+    }
+
+    if ($cancelled) {
+        $lines += ''
+        $lines += '[WARN] Execucao cancelada pelo utilizador (Stop).'
+    }
+
+    Write-AppLog "Runspace done: state=$state  lines=$($lines.Count)  errors=$($ps.Streams.Error.Count)"
+
+    try { $ps.Dispose() } catch {}
+    try { $rs.Close(); $rs.Dispose() } catch {}
+    $script:RunningPS = $null
+    $script:RunningRS = $null
+
+    return ,$lines
+}
+
 # ========== Dispatcher: recebe (toolId, params) e devolve @{ lines = [...] } ==========
 function Invoke-ToolRequest {
     param([string]$ToolId, [hashtable]$Params)
@@ -74,25 +220,21 @@ function Invoke-ToolRequest {
             $username = if ($Params.username) { [string]$Params.username } else { '' }
             $email    = if ($Params.email) { [string]$Params.email } else { '' }
             if (-not $username -and -not $email) { throw 'Indique username ou email.' }
-            # Corre o script original get-diag-info-aw2.ps1 directamente
             $scriptPath = Join-Path $ToolsDir 'scripts\get-diag-info-aw2.ps1'
             if (-not (Test-Path $scriptPath)) { throw "Script nao encontrado: $scriptPath" }
-            $callArgs = @{}
-            if ($username) { $callArgs['userName'] = $username }
-            if ($email)    { $callArgs['email']    = $email }
-            $raw = & $scriptPath @callArgs *>&1
-            $lines = @($raw | ForEach-Object { "$_" })
+            $p = @{}
+            if ($username) { $p['userName'] = $username }
+            if ($email)    { $p['email']    = $email }
+            $lines = Invoke-ScriptInRunspace -ScriptPath $scriptPath -Parameters $p
             return @{ lines = $lines }
         }
 
         'GroupInfo' {
             $g = [string]$Params.groupName
             if (-not $g) { throw 'Indique o nome do grupo.' }
-            # Corre o script original get-diag-info-group.ps1 directamente
             $scriptPath = Join-Path $ToolsDir 'scripts\get-diag-info-group.ps1'
             if (-not (Test-Path $scriptPath)) { throw "Script nao encontrado: $scriptPath" }
-            $raw = & $scriptPath -groupName $g *>&1
-            $lines = @($raw | ForEach-Object { "$_" })
+            $lines = Invoke-ScriptInRunspace -ScriptPath $scriptPath -Parameters @{ groupName = $g }
             return @{ lines = $lines }
         }
 
@@ -163,36 +305,134 @@ function Invoke-ToolRequest {
             $includeRecov = [bool]$Params.includeRecov
             if (-not $raw) { throw 'Indique pelo menos um UPN.' }
 
-            # Connect se ainda nao ligado
-            $conn = $null
-            try { $conn = Get-ConnectionInformation -ErrorAction SilentlyContinue | Where-Object State -eq 'Connected' | Select-Object -First 1 } catch {}
-            if (-not $conn) {
+            $upns = $raw -split '[\r\n,;]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique
+
+            # Corre tudo num runspace separado:
+            #  1) Valida via Microsoft.Graph que o user tem role Exchange Admin (ou superior) ACTIVA
+            #  2) So depois faz Connect-ExchangeOnline
+            #  3) Itera os UPNs e devolve estatisticas
+            #  Auth popups (Graph + EXO) sao spawnados fora da UI thread,
+            #  por isso aparecem visiveis e a UI nao bloqueia.
+            $sb = {
+                param([string]$AdminUpn, [string[]]$Upns, [bool]$IncludeRecov)
+
+                # ---- 1. Validacao de role (Microsoft Graph) ----
+                "[INFO] A validar roles activas do administrador (Microsoft Graph)..."
+                if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
+                    "[ERR] Modulo Microsoft.Graph.Authentication nao instalado."
+                    "      Para instalar: Install-Module Microsoft.Graph.Authentication -Scope CurrentUser"
+                    return
+                }
+                Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
+
+                $graphScopes = @('RoleManagement.Read.Directory','Directory.Read.All','User.Read')
+                $graphParams = @{ Scopes = $graphScopes; NoWelcome = $true; ErrorAction = 'Stop' }
+                try {
+                    Connect-MgGraph @graphParams | Out-Null
+                } catch {
+                    "[ERR] Connect-MgGraph falhou: $($_.Exception.Message)"
+                    return
+                }
+
+                # transitiveMemberOf/microsoft.graph.directoryRole devolve so roles ACTIVAS
+                # (PIM eligible nao activadas nao aparecem aqui)
+                try {
+                    $resp = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole' -ErrorAction Stop
+                    $activeRoles = @($resp.value | ForEach-Object { $_.displayName })
+                } catch {
+                    "[ERR] Falha a ler roles via Graph: $($_.Exception.Message)"
+                    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
+                    return
+                }
+
+                $allowedRoles = @(
+                    'Exchange Administrator',
+                    'Exchange Recipient Administrator',
+                    'Global Administrator',
+                    'Global Reader'
+                )
+                $matched = @($activeRoles | Where-Object { $_ -in $allowedRoles })
+
+                if ($activeRoles.Count -eq 0) {
+                    "[ERR] Nao tens nenhuma directory role ACTIVA neste momento."
+                    "      Activa em PIM: https://portal.azure.com/#view/Microsoft_Azure_PIMCommon/ActivationMenuBlade"
+                    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
+                    return
+                }
+
+                "[INFO] Roles activas detectadas: $($activeRoles -join ', ')"
+
+                if ($matched.Count -eq 0) {
+                    "[ERR] Nenhuma role com acesso a Exchange Online esta ACTIVA."
+                    "      Roles aceites: $($allowedRoles -join ', ')"
+                    "      Activa Exchange Administrator em PIM antes de tentar de novo."
+                    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
+                    return
+                }
+
+                "[OK] Role permitida activa: $($matched -join ', ')"
+
+                # ---- 2. Connect Exchange Online ----
+                if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
+                    "[ERR] Modulo ExchangeOnlineManagement nao instalado."
+                    "      Install-Module ExchangeOnlineManagement -Scope CurrentUser"
+                    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
+                    return
+                }
                 Import-Module ExchangeOnlineManagement -ErrorAction Stop
-                $p = @{ ShowBanner = $false; ErrorAction = 'Stop' }
-                if ($adminUpn) { $p.UserPrincipalName = $adminUpn }
-                Connect-ExchangeOnline @p
+
+                $alreadyConn = $null
+                try { $alreadyConn = Get-ConnectionInformation -ErrorAction SilentlyContinue | Where-Object State -eq 'Connected' | Select-Object -First 1 } catch {}
+                if (-not $alreadyConn) {
+                    "[INFO] A ligar a Exchange Online (popup de autenticacao vai aparecer)..."
+                    $exoParams = @{ ShowBanner = $false; ErrorAction = 'Stop' }
+                    if ($AdminUpn) { $exoParams.UserPrincipalName = $AdminUpn }
+                    try {
+                        Connect-ExchangeOnline @exoParams
+                    } catch {
+                        "[ERR] Connect-ExchangeOnline falhou: $($_.Exception.Message)"
+                        try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
+                        return
+                    }
+                    "[OK] Ligado a Exchange Online"
+                } else {
+                    "[INFO] Sessao Exchange Online ja activa, a reutilizar."
+                }
+
+                # ---- 3. Iterar UPNs ----
+                ""
+                "[INFO] Exchange Online - $($Upns.Count) mailbox(es)"
+                ""
+                foreach ($u in $Upns) {
+                    try {
+                        $stats = Get-MailboxStatistics -Identity $u -ErrorAction Stop
+                        "[OK] $u"
+                        "  DisplayName         : $($stats.DisplayName)"
+                        "  StorageLimitStatus  : $($stats.StorageLimitStatus)"
+                        "  TotalItemSize       : $($stats.TotalItemSize)"
+                        "  TotalDeletedItemSize: $($stats.TotalDeletedItemSize)"
+                        "  ItemCount           : $($stats.ItemCount)"
+                        "  DeletedItemCount    : $($stats.DeletedItemCount)"
+                        "  LastLogonTime       : $($stats.LastLogonTime)"
+                        if ($IncludeRecov) {
+                            try {
+                                $rec = Get-MailboxStatistics -Identity $u -FolderScope RecoverableItems -ErrorAction Stop
+                                "  RecoverableItems    : $($rec.TotalItemSize)"
+                            } catch {
+                                "  RecoverableItems    : (erro: $($_.Exception.Message))"
+                            }
+                        }
+                    } catch {
+                        "[ERR] $u :: $($_.Exception.Message)"
+                    }
+                    ""
+                }
             }
 
-            $upns = $raw -split '[\r\n,;]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique
-            $lines = @()
-            $lines += "[INFO] Exchange Online - $($upns.Count) mailbox(es)"
-            $lines += ''
-            foreach ($u in $upns) {
-                $r = MBX_Get-Stats -Upn $u -IncludeRecoverable $includeRecov
-                if ($r.Status -eq 'OK') {
-                    $lines += "[OK] $u"
-                    $lines += "  DisplayName         : $($r.DisplayName)"
-                    $lines += "  StorageLimitStatus  : $($r.StorageLimitStatus)"
-                    $lines += "  TotalItemSize       : $($r.TotalItemSize)"
-                    $lines += "  TotalDeletedItemSize: $($r.TotalDeletedItemSize)"
-                    $lines += "  ItemCount           : $($r.ItemCount)"
-                    $lines += "  DeletedItemCount    : $($r.DeletedItemCount)"
-                    $lines += "  LastLogonTime       : $($r.LastLogonTime)"
-                    if ($includeRecov) { $lines += "  RecoverableItems    : $($r.RecoverableItems)" }
-                } else {
-                    $lines += "[ERR] $u :: $($r.Status)"
-                }
-                $lines += ''
+            $lines = Invoke-ScriptInRunspace -ScriptBlock $sb -Parameters @{
+                AdminUpn     = $adminUpn
+                Upns         = ,$upns
+                IncludeRecov = $includeRecov
             }
             return @{ lines = $lines }
         }
@@ -274,6 +514,10 @@ $wv.add_CoreWebView2InitializationCompleted({
                         host = $env:COMPUTERNAME; user = "$env:USERDOMAIN\$env:USERNAME"
                         adAvailable = [bool]$script:ADAvailable
                     }}
+                }
+                'CANCEL_TOOL' {
+                    Stop-RunningScript
+                    $reply = @{ id = $msg.id; ok = $true; result = @{ cancelled = $true } }
                 }
                 default { throw "tipo desconhecido: $($msg.type)" }
             }
