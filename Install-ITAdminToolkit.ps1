@@ -93,12 +93,54 @@ $zipPath = Join-Path $env:TEMP $asset.name
 Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
 Write-Host "    Descarregado: $([Math]::Round((Get-Item $zipPath).Length / 1MB, 2)) MB" -ForegroundColor Green
 
-# ===== 4. Extrair =====
-Write-Host "`n[3/3] A extrair..." -ForegroundColor Yellow
+# ===== 4. Fechar app em execucao (se existir) =====
+Write-Host "`n[3/3] A fechar instancias em execucao..." -ForegroundColor Yellow
+function Stop-RunningApp {
+    param([string]$Path)
+    # PowerShell host (lancado por ITAdminToolkit-Web.ps1 ou .bat)
+    try {
+        Get-CimInstance Win32_Process -Filter "name='powershell.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -like '*ITAdminToolkit-Web.ps1*' } |
+            ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+    } catch {}
+    # Processos WebView2 filhos (sao independentes do host)
+    try {
+        Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -like "*$Path*" } |
+            ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+    } catch {}
+    # WScript host (se foi lancado via .vbs)
+    try {
+        Get-CimInstance Win32_Process -Filter "name='wscript.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -like '*Launch-Web-NoConsole.vbs*' } |
+            ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }
+    } catch {}
+}
+Stop-RunningApp -Path $InstallPath
+Start-Sleep -Seconds 1
+
+# ===== 5. Extrair (com retry se ficheiros locked) =====
+Write-Host "A extrair..." -ForegroundColor Yellow
 if (Test-Path $InstallPath) {
-    # Preservar logs do user e config anteriores, substituir app
     $oldAppDir = Join-Path $InstallPath 'ITAdminToolkit'
-    if (Test-Path $oldAppDir) { Remove-Item $oldAppDir -Recurse -Force }
+    if (Test-Path $oldAppDir) {
+        $retries = 5
+        for ($i = 1; $i -le $retries; $i++) {
+            try {
+                Remove-Item $oldAppDir -Recurse -Force -ErrorAction Stop
+                break
+            } catch {
+                if ($i -eq $retries) {
+                    Write-Host "    [!] Nao consegui remover $oldAppDir apos $retries tentativas." -ForegroundColor Red
+                    Write-Host "    Fecha manualmente a aplicacao (X na janela) e volta a correr este instalador." -ForegroundColor Yellow
+                    throw
+                }
+                Write-Host "    Ficheiros locked. A tentar fechar processos e repetir ($i/$retries)..." -ForegroundColor DarkYellow
+                Stop-RunningApp -Path $InstallPath
+                Start-Sleep -Seconds 2
+            }
+        }
+    }
 } else {
     New-Item $InstallPath -ItemType Directory -Force | Out-Null
 }
