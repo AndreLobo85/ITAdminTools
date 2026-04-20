@@ -1,15 +1,15 @@
 {
-  "version": "1.0.0",
-  "releaseName": "IT Admin Toolkit - Initial release",
-  "releaseDate": "2026-04-20",
+  "version": "1.0.1",
+  "releaseName": "IT Admin Toolkit - LDAP hotfix",
+  "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
     "webView2Runtime": true,
     "powershell": "5.1"
   },
   "changelog": [
-    "Dashboard-first UI (design Claude novobanco)",
-    "5 ferramentas: UserInfo, GroupInfo, ADGroupAuditor, ShareAuditor, MailboxStats",
-    "SharePoint Site Members (PnP.PowerShell)"
+    "fix: UserInfo deixa de iterar todos os DCs (causava timeouts em dominios grandes)",
+    "fix: timeout do bridge aumentado de 60s para 180s",
+    "UI + 6 ferramentas (UserInfo, GroupInfo, ADGroupAuditor, ShareAuditor, MailboxStats, SharePointSite)"
   ]
 }

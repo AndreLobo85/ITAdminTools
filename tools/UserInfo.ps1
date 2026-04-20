@@ -59,21 +59,15 @@ function UI_Get-UserInfo {
     if ($results.Count -eq 0) { return $null }
     $result = $results[0]
 
-    # LockedOut + badPwdCount por DC
+    # LockedOut + badPwdCount - apenas do DC actual (iterar todos os DCs em dominios
+    # grandes e inviavel, demorava minutos e fazia timeout).
     $lockedOut = @(); $badPwdCount = @(); $dcNames = @()
-    foreach ($dc in $domain.DomainControllers) {
-        if ($PumpUI) { & $PumpUI }
-        try {
-            $searcher.SearchRoot = "LDAP://$($dc.Name)/$($domainObj.distinguishedName)"
-            $resT = $searcher.FindAll()
-            if ($resT.Count -gt 0) {
-                $ae = [adsi]$resT.Properties.adspath[0]
-                $lockedOut   += [bool]($ae.userAccountControl[0] -band $script:UAC_LOCKOUT)
-                $badPwdCount += [int]$ae.badPwdCount[0]
-                $dcNames     += $dc.Name
-            }
-        } catch { }
-    }
+    try {
+        $ae = [adsi]$result.Properties.adspath[0]
+        $lockedOut   += [bool]($ae.userAccountControl[0] -band $script:UAC_LOCKOUT)
+        $badPwdCount += [int]$ae.badPwdCount[0]
+        $dcNames     += $DC.Name
+    } catch { }
 
     # Manager DisplayName
     $managerName = ''

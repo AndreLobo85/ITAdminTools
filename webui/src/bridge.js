@@ -34,13 +34,13 @@
       const id = ++seq;
       pending.set(id, { resolve, reject });
       window.chrome.webview.postMessage({ id, type, ...payload });
-      // timeout de seguranca: 60s
+      // timeout de seguranca: 3 min (suficiente para LDAP+Exchange em corp networks)
       setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
-          reject(new Error('timeout (60s) a executar ' + type));
+          reject(new Error('timeout (180s) a executar ' + type));
         }
-      }, 60000);
+      }, 180000);
     });
   }
 
