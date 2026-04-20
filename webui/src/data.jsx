@@ -258,8 +258,8 @@ const M365_MODULES = [
       en: 'Lists members, SharePoint groups and permissions of a site (via PnP.PowerShell, interactive MFA).',
     },
     params: [
-      { id: 'siteUrl', label: { pt: 'URL do site', en: 'Site URL' }, placeholder: 'https://tenant.sharepoint.com/sites/mysite', required: true },
-      { id: 'tenantAdminUrl', label: { pt: 'Admin URL (opcional)', en: 'Admin URL (optional)' }, placeholder: 'https://tenant-admin.sharepoint.com' },
+      { id: 'siteUrl', label: { pt: 'URL do site', en: 'Site URL' }, placeholder: 'https://bdso.sharepoint.com/sites/<site>', required: true },
+      { id: 'tenantAdminUrl', label: { pt: 'Admin URL (opcional)', en: 'Admin URL (optional)' }, placeholder: 'https://bdso-admin.sharepoint.com', default: 'https://bdso-admin.sharepoint.com' },
       { id: 'includeOwners', label: { pt: 'Incluir owners do M365 Group', en: 'Include M365 Group owners' }, type: 'check', default: true },
     ],
     runtime: 6.2,

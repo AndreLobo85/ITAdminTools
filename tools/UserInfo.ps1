@@ -31,12 +31,30 @@ function UI_Get-UserInfo {
         throw 'Indique username ou email.'
     }
 
-    $domain    = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
-    $domainObj = [ADSI]"LDAP://$domain"
+    # Resolver dominio + DC sem chamar GetCurrentDomain() / DomainControllers[0]
+    # (essas APIs enumeram internamente TODOS os DCs do dominio e podem pendurar
+    # varios segundos em dominios grandes). Usar env vars e instantaneo.
+    $dnsDomain = $env:USERDNSDOMAIN
+    if (-not $dnsDomain) {
+        # Fallback: deriva do AD quando nao estamos num dominio logonservers
+        $dnsDomain = ([System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()).Name
+    }
+    $server = $env:LOGONSERVER
+    if ($server) { $server = $server -replace '^\\\\' }
+    if (-not $server) {
+        # Fallback: qualquer DC do dominio via DNS locator
+        $server = $dnsDomain
+    }
+    # Distinguished name: novobanco.local -> DC=novobanco,DC=local
+    $baseDN = 'DC=' + ($dnsDomain -replace '\.', ',DC=')
+    # Precisamos de $domainObj para compatibilidade com codigo abaixo
+    $domainObj = [PSCustomObject]@{ distinguishedName = $baseDN }
 
     $searcher = New-Object System.DirectoryServices.DirectorySearcher
     $searcher.PageSize = 1
     $searcher.SearchScope = 'subtree'
+    $searcher.ClientTimeout = [TimeSpan]::FromSeconds(30)
+    $searcher.ServerTimeLimit = [TimeSpan]::FromSeconds(30)
     $searcher.Filter = if ($Email) {
         "(|(mail=$Email)(proxyAddresses=smtp:$Email))"
     } else {
@@ -48,24 +66,32 @@ function UI_Get-UserInfo {
       'pwdLastSet','msDS-UserPasswordExpiryTimeComputed','DistinguishedName',
       'Department','Manager','Title','Organization','proxyAddresses','homeMDB',
       'UserPrincipalName','whenCreated','AccountExpires','mailNickName',
-      'msExchRemoteRecipientType') | ForEach-Object {
+      'msExchRemoteRecipientType','userAccountControl','badPwdCount') | ForEach-Object {
         [void]$searcher.PropertiesToLoad.Add($_)
     }
 
-    $DC = $domain.DomainControllers[0]
-    $server = $DC.Name
-    $searcher.SearchRoot = "LDAP://$server/$($domainObj.distinguishedName)"
+    $searcher.SearchRoot = "LDAP://$server/$baseDN"
     $results = $searcher.FindAll()
     if ($results.Count -eq 0) { return $null }
     $result = $results[0]
+    # Mimic the $DC variable used downstream
+    $DC = [PSCustomObject]@{ Name = $server }
 
     # LockedOut + badPwdCount - apenas do DC actual (iterar todos os DCs em dominios
-    # grandes e inviavel, demorava minutos e fazia timeout).
+    # grandes era inviavel, causava timeouts). Usamos as propriedades ja carregadas
+    # no resultado da pesquisa, evitando qualquer 2a chamada LDAP.
     $lockedOut = @(); $badPwdCount = @(); $dcNames = @()
     try {
-        $ae = [adsi]$result.Properties.adspath[0]
-        $lockedOut   += [bool]($ae.userAccountControl[0] -band $script:UAC_LOCKOUT)
-        $badPwdCount += [int]$ae.badPwdCount[0]
+        $uacVal = 0
+        if ($result.Properties['userAccountControl'] -and $result.Properties['userAccountControl'].Count -gt 0) {
+            $uacVal = [int]$result.Properties['userAccountControl'][0]
+        }
+        $bpw = 0
+        if ($result.Properties['badPwdCount'] -and $result.Properties['badPwdCount'].Count -gt 0) {
+            $bpw = [int]$result.Properties['badPwdCount'][0]
+        }
+        $lockedOut   += [bool]($uacVal -band $script:UAC_LOCKOUT)
+        $badPwdCount += $bpw
         $dcNames     += $DC.Name
     } catch { }
 
@@ -96,8 +122,11 @@ function UI_Get-UserInfo {
         ($x1[0].Split('='))[1]
     } else { 'Nao tem licenca!' }
 
-    $adsiEntry = [adsi]$result.Properties.adspath[0]
-    $uac = [int]$adsiEntry.userAccountControl[0]
+    # Usar directamente do search result (evita 2a chamada LDAP via [adsi] bind)
+    $uac = 0
+    if ($result.Properties['userAccountControl'] -and $result.Properties['userAccountControl'].Count -gt 0) {
+        $uac = [int]$result.Properties['userAccountControl'][0]
+    }
 
     $whenCreated = ''
     try {

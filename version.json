@@ -1,6 +1,6 @@
 {
-  "version": "1.0.1",
-  "releaseName": "IT Admin Toolkit - LDAP hotfix",
+  "version": "1.0.2",
+  "releaseName": "IT Admin Toolkit - UserInfo fast-path",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,8 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "fix: UserInfo deixa de iterar todos os DCs (causava timeouts em dominios grandes)",
-    "fix: timeout do bridge aumentado de 60s para 180s",
-    "UI + 6 ferramentas (UserInfo, GroupInfo, ADGroupAuditor, ShareAuditor, MailboxStats, SharePointSite)"
+    "fix: UserInfo usa env:LOGONSERVER + env:USERDNSDOMAIN em vez de GetCurrentDomain()/DomainControllers[0] (elimina enumeracao interna de todos os DCs)",
+    "fix: UserInfo le userAccountControl/badPwdCount directamente do search result (sem 2a chamada LDAP via [adsi] bind)",
+    "fix: timeouts LDAP explicitos (30s client + 30s server)",
+    "installer: auto-close da app em execucao antes de substituir"
   ]
 }
