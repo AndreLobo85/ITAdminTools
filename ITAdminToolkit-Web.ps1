@@ -787,6 +787,37 @@ $form.Controls.Add($wv)
 $userDataFolder = Join-Path $env:LOCALAPPDATA 'ITAdminToolkit\WebView2UserData'
 if (-not (Test-Path $userDataFolder)) { New-Item $userDataFolder -ItemType Directory -Force | Out-Null }
 
+# Limpar cache do WebView2 se a versao mudou.
+# WebView2 guarda JS/CSS/HTML agressivamente; sem isto, user pode estar a
+# correr assets cacheados de uma versao antiga enquanto os ficheiros do
+# disco ja sao novos.
+try {
+    $versionFile = Join-Path $ScriptDir 'version.json'
+    $curVer = '?'
+    if (Test-Path $versionFile) {
+        $vObj = Get-Content $versionFile -Raw | ConvertFrom-Json
+        $curVer = [string]$vObj.version
+    }
+    $lastVerMarker = Join-Path $userDataFolder '.last-version'
+    $lastVer = if (Test-Path $lastVerMarker) { (Get-Content $lastVerMarker -Raw).Trim() } else { '' }
+    if ($lastVer -ne $curVer) {
+        Write-AppLog "Versao mudou ($lastVer -> $curVer). A limpar cache WebView2."
+        $cacheDirs = @(
+            (Join-Path $userDataFolder 'EBWebView\Default\Cache'),
+            (Join-Path $userDataFolder 'EBWebView\Default\Code Cache'),
+            (Join-Path $userDataFolder 'EBWebView\Default\Service Worker')
+        )
+        foreach ($d in $cacheDirs) {
+            if (Test-Path $d) {
+                try { Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
+        Set-Content -Path $lastVerMarker -Value $curVer -Encoding UTF8 -Force
+    }
+} catch {
+    Write-AppLog "Cache clear falhou: $($_.Exception.Message)"
+}
+
 $script:WebViewReady = $false
 $script:WebViewCtrl = $wv
 
@@ -819,8 +850,14 @@ $wv.add_CoreWebView2InitializationCompleted({
         Write-AppLog "Injeccao APP_VERSION falhou: $($_.Exception.Message)"
     }
 
-    # DevTools no arranque (util para debug; podes remover depois)
-    # $sender.CoreWebView2.OpenDevToolsWindow()
+    # DevTools no arranque (DEBUG MODE - v1.0.12: esta a investigar-se porque
+    # que a comunicacao PS<->JS nao funciona no PC do utilizador)
+    try {
+        $sender.CoreWebView2.OpenDevToolsWindow()
+        Write-AppLog "DevTools aberto (debug mode)"
+    } catch {
+        Write-AppLog "OpenDevToolsWindow falhou: $($_.Exception.Message)"
+    }
 
     # Handler de mensagens do JS
     $sender.CoreWebView2.add_WebMessageReceived({

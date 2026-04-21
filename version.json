@@ -1,6 +1,6 @@
 {
-  "version": "1.0.11",
-  "releaseName": "IT Admin Toolkit - SelfTest tool + reply logging",
+  "version": "1.0.12",
+  "releaseName": "IT Admin Toolkit - DEBUG MODE (DevTools + cache clear + verbose bridge)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,9 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "Novo tool SelfTest na categoria Diagnostico: testa APENAS a ligacao WebView2<->PowerShell, sem tocar em AD nem spawn de processos. Serve para isolar onde esta a falha: se SelfTest devolve linhas mas UserInfo nao devolve, o problema nao esta no bridge mas no spawn de scripts. Se nem SelfTest devolve nada, o problema e de comunicacao fundamental",
-    "Reply logging exaustivo: cada RUN_TOOL regista no log o tamanho da resposta, preview dos primeiros 300 chars, e se o PostWebMessageAsJson falhou ou foi bem sucedido",
-    "Safety net: se o dispatcher terminar sem produzir reply (por bug), e enviada uma resposta de erro explicita - em vez de deixar o frontend pendurado",
-    "Se PostWebMessageAsJson falhar, tentativa de fallback com JSON manual basico"
+    "DEBUG MODE: DevTools (F12) abre automaticamente no arranque da aplicacao. Permite ver o console JS, erros, e todas as mensagens trocadas com o PowerShell em tempo real",
+    "Cache WebView2 e limpo automaticamente quando a versao muda. Evita que JS/HTML cacheados das versoes antigas estejam a correr em vez dos novos",
+    "bridge.js agora loga TUDO no console: cada postMessage enviado, cada mensagem recebida, timeouts, erros. Vamos conseguir ver exactamente onde a comunicacao para",
+    "Auto-ping no arranque: 1.5s depois de carregar, a app chama getContext() automaticamente. Se PS responder, o bridge funciona. Se nao responder, vemos no console"
   ]
 }
