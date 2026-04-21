@@ -93,9 +93,8 @@ const ONPREM_MODULES = [
       ]},
       { id: 'groupName', label: { pt: 'Nome / padrão / sufixo(s)', en: 'Name / pattern / suffix(es)' }, placeholder: 'NR,NF  |  GNORMA*  |  GPAMNR', required: true },
       { id: 'expand', label: { pt: 'Expandir grupos aninhados (recursivo)', en: 'Expand nested groups recursively' }, type: 'check', default: false },
-      { id: 'tableView', label: { pt: 'Mostrar todos os membros em tabela no output', en: 'Show all members as table in output' }, type: 'check', default: false },
       { id: 'activeOnly', label: { pt: 'Apenas users activos (Enabled=True)', en: 'Active users only (Enabled=True)' }, type: 'check', default: false },
-      { id: 'export', label: { pt: 'Exportar Excel no fim (abre automaticamente)', en: 'Export Excel at the end (auto-opens)' }, type: 'check', default: false },
+      { id: 'export', label: { pt: 'Forçar Excel (mesmo com ≤50 users) - auto-open', en: 'Force Excel even with ≤50 users (auto-open)' }, type: 'check', default: false },
     ],
     runtime: 2.8,
     output: (p) => {

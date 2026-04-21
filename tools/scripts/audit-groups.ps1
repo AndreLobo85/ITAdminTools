@@ -290,11 +290,26 @@ if ($expand) {
     "Total linhas    : $($auditRows.Count)"
 }
 
-# -------- Tabela de users (estilo GUI antiga) --------
-# Emite uma listagem columnar com todos os users encontrados.
-# Util quando queremos ver todos os membros (nao truncado como no compact view).
-if (($expand -or $tableView) -and $auditRows.Count -gt 0) {
-    $userRows = @($auditRows | Where-Object MemberType -eq 'User')
+# -------- Decisao automatica: mostrar tabela ou auto-export --------
+# Regra:
+#   <= 50 users   -> tabela no output
+#   >  50 users   -> skip tabela (polui demasiado o terminal) + auto-export Excel
+# A flag $export force export independente do count.
+$THRESHOLD_SHOW_TABLE = 50
+$userRowsAll = @($auditRows | Where-Object MemberType -eq 'User')
+$userCount = $userRowsAll.Count
+$autoExportTriggered = $false
+if ($expand -and $userCount -gt $THRESHOLD_SHOW_TABLE -and -not $export) {
+    $autoExportTriggered = $true
+    $export = $true
+    ""
+    "[INFO] $userCount users encontrados - demasiado para mostrar em tabela no terminal."
+    "[INFO] A gerar Excel automaticamente..."
+}
+
+# -------- Tabela de users (inline no output) --------
+if (($expand -or $tableView) -and $userCount -gt 0 -and $userCount -le $THRESHOLD_SHOW_TABLE) {
+    $userRows = $userRowsAll
     if ($userRows.Count -gt 0) {
         ""
         "===================================================================="

@@ -1,6 +1,6 @@
 {
-  "version": "1.0.28",
-  "releaseName": "IT Admin Toolkit - Grupos AD tabela de users + export robusto",
+  "version": "1.0.29",
+  "releaseName": "IT Admin Toolkit - Grupos AD streaming live + auto-Excel >50 users",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,11 +8,11 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "Novo checkbox 'Mostrar todos os membros em tabela no output' no modulo Grupos AD. Quando ligado (implica automaticamente -expand) gera uma tabela tabular no fim do output com todas as colunas: GrupoAlvo, Caminho, SamAccount, Nome, Email, Ativo. Util quando ha muitos membros e o modo compact truncava",
-    "Excel export refactorado com tres niveis de diagnostico:",
-    " - Probe do Excel COM antes de tentar gerar. Se COM falhar, mostra erro e cai para CSV automaticamente",
-    " - Sondagem de pastas de destino (Documents -> Desktop -> USERPROFILE -> TEMP) com teste de escrita. Imprime a pasta escolhida",
-    " - Auto-open multi-tentativa: Invoke-Item -> Start-Process -> cmd /c start. Se todas falharem, imprime o path para abrir manualmente",
-    "Erros de geracao Excel agora emitem stack trace em vez de falharem silenciosamente"
+    "STREAMING LIVE: o terminal da app agora mostra cada linha do output enquanto o script esta a correr, em vez de esperar pelo fim. Util em auditorias grandes (6000+ users) onde dantes o user ficava a olhar para um terminal vazio ate ao fim. Ve progresso linha a linha",
+    "DECISAO AUTOMATICA para o output:",
+    " - Ate 50 users: mostra tabela completa no terminal (tabular, padded, copy-paste friendly)",
+    " - Mais de 50 users: auto-export Excel + sumario breve no terminal. Evita poluir terminal com milhares de linhas",
+    "Removido checkbox 'tableView' (agora e automatico). Checkbox 'export' renomeado para 'Forcar Excel (mesmo com <=50)' - forca geracao mesmo quando count cabe em tabela no terminal",
+    "Invoke-ScriptExternal passa a tail-folllow o ficheiro stdout em tempo real (FileShare.ReadWrite para ler enquanto o processo escreve)"
   ]
 }

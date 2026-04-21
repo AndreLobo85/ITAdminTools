@@ -444,41 +444,90 @@ function Invoke-ScriptExternal {
         return ,$lines
     }
 
+    # Tail stdout em tempo real enquanto o processo corre. Em vez de esperar
+    # pelo fim para ler o ficheiro inteiro, abrimos o ficheiro com FileShare
+    # ReadWrite (permite ler enquanto outro processo escreve) e lemos novas
+    # linhas periodicamente. Cada linha nova e Push-StreamLine via TOOL_LINE
+    # para o user ver progresso em tempo real.
+    $stdoutFs = $null
+    $stdoutSr = $null
+    $allStdoutLines = New-Object System.Collections.Generic.List[string]
+    $streamedCount = 0
     try {
-        $exited = $proc.WaitForExit($TimeoutSeconds * 1000)
+        if (Test-Path $tmpStdout) {
+            try {
+                $stdoutFs = [System.IO.FileStream]::new($tmpStdout,
+                    [System.IO.FileMode]::Open,
+                    [System.IO.FileAccess]::Read,
+                    [System.IO.FileShare]::ReadWrite)
+                $stdoutSr = New-Object System.IO.StreamReader($stdoutFs, [System.Text.Encoding]::UTF8)
+            } catch { Write-AppLog "Tail: nao consegui abrir $tmpStdout : $($_.Exception.Message)" }
+        }
+
+        $exited = $false
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+        while ((Get-Date) -lt $deadline) {
+            if (-not $stdoutFs -and (Test-Path $tmpStdout)) {
+                try {
+                    $stdoutFs = [System.IO.FileStream]::new($tmpStdout,
+                        [System.IO.FileMode]::Open,
+                        [System.IO.FileAccess]::Read,
+                        [System.IO.FileShare]::ReadWrite)
+                    $stdoutSr = New-Object System.IO.StreamReader($stdoutFs, [System.Text.Encoding]::UTF8)
+                } catch {}
+            }
+            # Drain new lines
+            if ($stdoutSr) {
+                while (-not $stdoutSr.EndOfStream) {
+                    $l = $stdoutSr.ReadLine()
+                    if ($null -ne $l) {
+                        $allStdoutLines.Add($l)
+                        Push-StreamLine $l
+                        $streamedCount++
+                    }
+                }
+            }
+            if ($proc.HasExited) { $exited = $true; break }
+            Start-Sleep -Milliseconds 200
+            [System.Windows.Forms.Application]::DoEvents()
+        }
+
         if (-not $exited) {
             try { $proc.Kill() } catch {}
             $lines += "[ERR] Timeout apos ${TimeoutSeconds}s. Processo terminado."
             return ,$lines
         }
+
+        # Final drain apos exit (pode ter linhas buffered)
+        if ($stdoutSr) {
+            while (-not $stdoutSr.EndOfStream) {
+                $l = $stdoutSr.ReadLine()
+                if ($null -ne $l) {
+                    $allStdoutLines.Add($l)
+                    Push-StreamLine $l
+                    $streamedCount++
+                }
+            }
+        }
         $exitCode = $proc.ExitCode
     } finally {
+        if ($stdoutSr) { try { $stdoutSr.Close() } catch {} }
+        if ($stdoutFs) { try { $stdoutFs.Close() } catch {} }
         try { $proc.Dispose() } catch {}
     }
 
     $elapsed = [int]([datetime]::UtcNow - $startT).TotalMilliseconds
-    $lines += "[DIAG] Exit code: $exitCode  |  Duracao: ${elapsed}ms"
+    $lines += "[DIAG] Exit code: $exitCode  |  Duracao: ${elapsed}ms  (streamed $streamedCount linhas)"
 
-    # Ler os ficheiros agora que o processo terminou. Sem risco de deadlock.
-    $stdout = ''
+    # stderr apos exit (sem streaming - e raro haver)
     $stderr = ''
-    try { if (Test-Path $tmpStdout) { $stdout = Get-Content -LiteralPath $tmpStdout -Raw -Encoding UTF8 } } catch {}
     try { if (Test-Path $tmpStderr) { $stderr = Get-Content -LiteralPath $tmpStderr -Raw -Encoding UTF8 } } catch {}
-
-    $stdoutLen = if ($stdout) { $stdout.Length } else { 0 }
     $stderrLen = if ($stderr) { $stderr.Length } else { 0 }
-    $lines += "[DIAG] stdout=$stdoutLen chars | stderr=$stderrLen chars"
+    if ($stderrLen -gt 0) { $lines += "[DIAG] stderr=$stderrLen chars" }
     $lines += ''
 
-    $bodyCount = 0
-    if ($stdout) {
-        $stdoutLines = $stdout -split "`r?`n"
-        # Remove ultima linha vazia resultante do split final
-        if ($stdoutLines.Count -gt 0 -and $stdoutLines[-1] -eq '') {
-            $stdoutLines = $stdoutLines[0..($stdoutLines.Count-2)]
-        }
-        foreach ($line in $stdoutLines) { $lines += $line; $bodyCount++ }
-    }
+    $bodyCount = $allStdoutLines.Count
+    foreach ($line in $allStdoutLines) { $lines += $line }
     if ($stderr -and $stderr.Trim()) {
         $lines += ''
         $lines += '[DIAG] stderr:'
@@ -880,14 +929,10 @@ function Invoke-ToolRequest {
             if ($mode -notin @('Suffix','Wildcard','Exact')) { $mode = 'Suffix' }
             $p['mode'] = $mode
             if ($Params.expand)     { $p['expand']     = [bool]$Params.expand }
-            if ($Params.tableView)  { $p['tableView']  = [bool]$Params.tableView }
             if ($Params.activeOnly) { $p['activeOnly'] = [bool]$Params.activeOnly }
             if ($Params.export)     { $p['export']     = [bool]$Params.export }
-            # tableView requer expand (para ter dados dos users); se user ligou
-            # tableView sem expand, liga expand automaticamente
-            if ($Params.tableView -and -not $Params.expand) { $p['expand'] = $true }
             # expand + export pode demorar minutos para grupos com muitos users
-            $timeout = if ($Params.expand -or $Params.export -or $Params.tableView) { 600 } else { 60 }
+            $timeout = if ($Params.expand -or $Params.export) { 600 } else { 60 }
             $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters $p -TimeoutSeconds $timeout
             return @{ lines = $lines }
         }
