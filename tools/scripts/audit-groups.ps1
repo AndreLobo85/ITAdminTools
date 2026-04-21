@@ -30,6 +30,7 @@ param(
     [switch]$expand,
     [switch]$activeOnly,
     [switch]$export,
+    [switch]$tableView,
     [int]$maxGroups = 100
 )
 
@@ -289,17 +290,103 @@ if ($expand) {
     "Total linhas    : $($auditRows.Count)"
 }
 
+# -------- Tabela de users (estilo GUI antiga) --------
+# Emite uma listagem columnar com todos os users encontrados.
+# Util quando queremos ver todos os membros (nao truncado como no compact view).
+if (($expand -or $tableView) -and $auditRows.Count -gt 0) {
+    $userRows = @($auditRows | Where-Object MemberType -eq 'User')
+    if ($userRows.Count -gt 0) {
+        ""
+        "===================================================================="
+        "TABELA DE USERS ($($userRows.Count) linhas)"
+        "===================================================================="
+
+        # Calcular largura de cada coluna dinamicamente
+        $cols = @(
+            @{ Name='GrupoAlvo'; Width=20 },
+            @{ Name='Caminho';   Width=40 },
+            @{ Name='SamAccount';Width=16 },
+            @{ Name='Nome';      Width=28 },
+            @{ Name='Email';     Width=32 },
+            @{ Name='Ativo';     Width=5  }
+        )
+        foreach ($c in $cols) {
+            $maxInData = 0
+            switch ($c.Name) {
+                'GrupoAlvo' { $maxInData = ($userRows | ForEach-Object { "$($_.TargetGroup)".Length } | Measure-Object -Maximum).Maximum }
+                'Caminho'   { $maxInData = ($userRows | ForEach-Object { "$($_.Path)".Length } | Measure-Object -Maximum).Maximum }
+                'SamAccount'{ $maxInData = ($userRows | ForEach-Object { "$($_.SamAccount)".Length } | Measure-Object -Maximum).Maximum }
+                'Nome'      { $maxInData = ($userRows | ForEach-Object { "$($_.DisplayName)".Length } | Measure-Object -Maximum).Maximum }
+                'Email'     { $maxInData = ($userRows | ForEach-Object { "$($_.Email)".Length } | Measure-Object -Maximum).Maximum }
+            }
+            if ($maxInData -gt $c.Width) { $c.Width = [Math]::Min($maxInData, 60) }
+        }
+
+        # Header
+        $hdr = ($cols | ForEach-Object { $_.Name.PadRight($_.Width) }) -join '  '
+        $hdr
+        ($cols | ForEach-Object { '-' * $_.Width }) -join '  '
+
+        foreach ($r in $userRows) {
+            $ativo = if ($null -ne $r.Enabled) { if ($r.Enabled) { 'Sim' } else { 'Nao' } } else { '' }
+            $values = @(
+                "$($r.TargetGroup)",
+                "$($r.Path)",
+                "$($r.SamAccount)",
+                "$($r.DisplayName)",
+                "$($r.Email)",
+                $ativo
+            )
+            $line = @()
+            for ($i = 0; $i -lt $cols.Count; $i++) {
+                $v = $values[$i]
+                if ($v.Length -gt $cols[$i].Width) { $v = $v.Substring(0, $cols[$i].Width - 1) + '.' }
+                $line += $v.PadRight($cols[$i].Width)
+            }
+            ($line -join '  ').TrimEnd()
+        }
+        ""
+    }
+}
+
 # -------- Export --------
 if ($export -and $auditRows.Count -gt 0) {
     ""
+    "===================================================================="
     "[INFO] A exportar..."
     $timestamp = (Get-Date).ToString('yyyyMMdd_HHmmss')
     $baseName = "AuditGruposAD_$timestamp"
-    $downloads = [Environment]::GetFolderPath('MyDocuments')
-    if (-not (Test-Path $downloads)) { $downloads = $env:USERPROFILE }
+
+    # Tentar Documents -> se falhar, Desktop -> se falhar, USERPROFILE
+    $downloads = $null
+    foreach ($cand in @(
+        [Environment]::GetFolderPath('MyDocuments'),
+        [Environment]::GetFolderPath('Desktop'),
+        $env:USERPROFILE
+    )) {
+        if ($cand -and (Test-Path $cand)) {
+            try {
+                $testFile = Join-Path $cand ".itadmin-probe-$timestamp"
+                Set-Content -Path $testFile -Value 'probe' -ErrorAction Stop
+                Remove-Item $testFile -Force -ErrorAction SilentlyContinue
+                $downloads = $cand
+                break
+            } catch {}
+        }
+    }
+    if (-not $downloads) { $downloads = $env:TEMP }
+    "[INFO] Pasta de destino: $downloads"
 
     $useExcel = $false
-    try { $null = New-Object -ComObject Excel.Application; $useExcel = $true } catch {}
+    try {
+        $probeExcel = New-Object -ComObject Excel.Application -ErrorAction Stop
+        $useExcel = $true
+        try { $probeExcel.Quit() } catch {}
+        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($probeExcel) | Out-Null
+        "[INFO] Excel COM disponivel. A gerar .xlsx"
+    } catch {
+        "[WARN] Excel COM indisponivel ($($_.Exception.Message)). Fallback para CSV."
+    }
 
     if ($useExcel) {
         $outPath = Join-Path $downloads "$baseName.xlsx"
@@ -351,16 +438,51 @@ if ($export -and $auditRows.Count -gt 0) {
             $wb.SaveAs($outPath, 51) # xlOpenXMLWorkbook
             $wb.Close($false)
             "[OK] Exportado: $outPath"
-            Start-Process $outPath
+        } catch {
+            "[ERR] Erro a gerar Excel: $($_.Exception.Message)"
+            "      Stack: $($_.ScriptStackTrace)"
+            $outPath = $null
         } finally {
-            $excel.Quit()
-            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null
+            try { $excel.Quit() } catch {}
+            try { [System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) | Out-Null } catch {}
             [GC]::Collect() | Out-Null
         }
     } else {
         $outPath = Join-Path $downloads "$baseName.csv"
-        $auditRows | Export-Csv -Path $outPath -NoTypeInformation -Encoding UTF8
-        "[WARN] Excel nao disponivel, exportado como CSV: $outPath"
-        Start-Process $outPath
+        try {
+            $auditRows | Export-Csv -Path $outPath -NoTypeInformation -Encoding UTF8
+            "[OK] Exportado CSV: $outPath"
+        } catch {
+            "[ERR] Erro a escrever CSV: $($_.Exception.Message)"
+            $outPath = $null
+        }
+    }
+
+    # Auto-open (multi-tentativa)
+    if ($outPath -and (Test-Path $outPath)) {
+        "[INFO] A abrir ficheiro..."
+        $opened = $false
+        # Tentativa 1: Invoke-Item (usa association do Windows)
+        try { Invoke-Item -LiteralPath $outPath -ErrorAction Stop; $opened = $true } catch {
+            "[WARN] Invoke-Item falhou: $($_.Exception.Message)"
+        }
+        # Tentativa 2: Start-Process
+        if (-not $opened) {
+            try { Start-Process -FilePath $outPath -ErrorAction Stop; $opened = $true } catch {
+                "[WARN] Start-Process falhou: $($_.Exception.Message)"
+            }
+        }
+        # Tentativa 3: cmd /c start
+        if (-not $opened) {
+            try { & cmd /c start "" "`"$outPath`"" ; $opened = $true } catch {
+                "[WARN] cmd start falhou: $($_.Exception.Message)"
+            }
+        }
+        if ($opened) {
+            "[OK] Ficheiro aberto."
+        } else {
+            "[WARN] Nao consegui abrir automaticamente. Abre manualmente:"
+            "       $outPath"
+        }
     }
 }

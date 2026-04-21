@@ -880,10 +880,14 @@ function Invoke-ToolRequest {
             if ($mode -notin @('Suffix','Wildcard','Exact')) { $mode = 'Suffix' }
             $p['mode'] = $mode
             if ($Params.expand)     { $p['expand']     = [bool]$Params.expand }
+            if ($Params.tableView)  { $p['tableView']  = [bool]$Params.tableView }
             if ($Params.activeOnly) { $p['activeOnly'] = [bool]$Params.activeOnly }
             if ($Params.export)     { $p['export']     = [bool]$Params.export }
+            # tableView requer expand (para ter dados dos users); se user ligou
+            # tableView sem expand, liga expand automaticamente
+            if ($Params.tableView -and -not $Params.expand) { $p['expand'] = $true }
             # expand + export pode demorar minutos para grupos com muitos users
-            $timeout = if ($Params.expand -or $Params.export) { 600 } else { 60 }
+            $timeout = if ($Params.expand -or $Params.export -or $Params.tableView) { 600 } else { 60 }
             $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters $p -TimeoutSeconds $timeout
             return @{ lines = $lines }
         }

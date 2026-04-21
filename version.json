@@ -1,6 +1,6 @@
 {
-  "version": "1.0.27",
-  "releaseName": "IT Admin Toolkit - Ligar SharePoint Online + audit via pwsh.exe",
+  "version": "1.0.28",
+  "releaseName": "IT Admin Toolkit - Grupos AD tabela de users + export robusto",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,9 +8,11 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "Novo botao Ligar SharePoint Online na connection bar dos modulos SharePoint Online. Abre janela pwsh.exe visivel com Connect-PnPOnline -Interactive, popup Microsoft aparece, user autentica",
-    "Campo Tenant Admin URL / Site URL na barra de ligacao. Default: https://bdso-admin.sharepoint.com. Usar o URL que pretendes connectar (admin para tenant-level, site URL para site especifico)",
-    "Requer modulo PnP.PowerShell (Install-Module PnP.PowerShell -Scope CurrentUser)",
-    "Modulo SharePointSite (Site Members) agora spawn pwsh.exe externo com novo script audit-spo-site.ps1 que reusa a sessao MSAL. Antes corria em PS 5.1 o que falhava quando PnP estava instalado em PS 7"
+    "Novo checkbox 'Mostrar todos os membros em tabela no output' no modulo Grupos AD. Quando ligado (implica automaticamente -expand) gera uma tabela tabular no fim do output com todas as colunas: GrupoAlvo, Caminho, SamAccount, Nome, Email, Ativo. Util quando ha muitos membros e o modo compact truncava",
+    "Excel export refactorado com tres niveis de diagnostico:",
+    " - Probe do Excel COM antes de tentar gerar. Se COM falhar, mostra erro e cai para CSV automaticamente",
+    " - Sondagem de pastas de destino (Documents -> Desktop -> USERPROFILE -> TEMP) com teste de escrita. Imprime a pasta escolhida",
+    " - Auto-open multi-tentativa: Invoke-Item -> Start-Process -> cmd /c start. Se todas falharem, imprime o path para abrir manualmente",
+    "Erros de geracao Excel agora emitem stack trace em vez de falharem silenciosamente"
   ]
 }
