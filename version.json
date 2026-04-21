@@ -1,6 +1,6 @@
 {
-  "version": "1.0.10",
-  "releaseName": "IT Admin Toolkit - Start-Process redirect to files (fixes silent stdout)",
+  "version": "1.0.11",
+  "releaseName": "IT Admin Toolkit - SelfTest tool + reply logging",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,9 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX CRITICO: o processo externo gerado em v1.0.9 produzia output mas a app nao o lia. Razao: usei Register-ObjectEvent com -Action, cujo scriptblock so corre quando a event queue do runspace principal e processada - mas o WaitForExit bloqueava essa queue, logo os eventos nunca eram executados e stdout ficava vazio",
-    "Substituido por Start-Process -RedirectStandardOutput/-RedirectStandardError para ficheiros temporarios. Sem eventos, sem deadlock, sem dependencia da event queue. O processo escreve directamente para os ficheiros, a app le-os depois do WaitForExit",
-    "Ficheiros temporarios (%TEMP%\\ITAdminToolkit-run-<id>.out.txt e .err.txt) nao sao apagados automaticamente - permitem post-mortem manual",
-    "Cabecalho DIAG no output inclui o caminho do ficheiro stdout para referencia"
+    "Novo tool SelfTest na categoria Diagnostico: testa APENAS a ligacao WebView2<->PowerShell, sem tocar em AD nem spawn de processos. Serve para isolar onde esta a falha: se SelfTest devolve linhas mas UserInfo nao devolve, o problema nao esta no bridge mas no spawn de scripts. Se nem SelfTest devolve nada, o problema e de comunicacao fundamental",
+    "Reply logging exaustivo: cada RUN_TOOL regista no log o tamanho da resposta, preview dos primeiros 300 chars, e se o PostWebMessageAsJson falhou ou foi bem sucedido",
+    "Safety net: se o dispatcher terminar sem produzir reply (por bug), e enviada uma resposta de erro explicita - em vez de deixar o frontend pendurado",
+    "Se PostWebMessageAsJson falhar, tentativa de fallback com JSON manual basico"
   ]
 }

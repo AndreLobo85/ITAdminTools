@@ -5,6 +5,20 @@
 
 const ONPREM_MODULES = [
   {
+    id: 'SelfTest',
+    file: 'SelfTest (bridge diagnostic)',
+    cat: 'Diagnostico',
+    icon: 'sparkle',
+    name: { pt: 'Teste da ligacao PS', en: 'PS bridge self-test' },
+    desc: {
+      pt: 'Testa apenas a ligacao WebView2 <-> PowerShell. Nao toca em AD, nao corre scripts. Se este teste nao devolver linhas, o problema nao esta nos scripts.',
+      en: 'Tests only the WebView2 <-> PowerShell bridge. Does not touch AD, does not run scripts. If this returns nothing, the problem is not in the scripts.',
+    },
+    params: [],
+    runtime: 0.1,
+    output: () => ['[OK] SelfTest (simulation mode)'],
+  },
+  {
     id: 'UserInfo',
     file: 'get-diag-info-aw2.ps1',
     cat: 'Active Directory',

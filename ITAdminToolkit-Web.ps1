@@ -514,6 +514,31 @@ function Invoke-ToolRequest {
     Write-AppLog "RUN_TOOL: $ToolId  params=$($Params | ConvertTo-Json -Compress -Depth 5)"
 
     switch ($ToolId) {
+        'SelfTest' {
+            # Teste isolado da ligacao WebView2 <-> PowerShell.
+            # Nao toca em AD, nao spawn processos, nao toca em ficheiros.
+            # Se isto devolver linhas a UI, o bridge funciona. Se nao devolver,
+            # o problema NAO esta nos scripts AD.
+            $bits = if ([IntPtr]::Size -eq 8) { '64-bit' } else { '32-bit' }
+            $lines = @(
+                "[OK] Bridge PS <-> JS: OK",
+                "[INFO] Se estas a ver estas linhas, a reply do PowerShell chega a UI.",
+                "",
+                "[DIAG] Host PowerShell $($PSVersionTable.PSVersion) $bits",
+                "[DIAG] PID: $PID",
+                "[DIAG] User: $env:USERDOMAIN\$env:USERNAME",
+                "[DIAG] Machine: $env:COMPUTERNAME",
+                "[DIAG] ApartmentState: $([System.Threading.Thread]::CurrentThread.GetApartmentState())",
+                "[DIAG] App log: $script:LogPath",
+                "[DIAG] Hora servidor: $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))",
+                "",
+                "[INFO] Se UserInfo/GroupInfo nao devolvem nada mas este teste devolve,",
+                "       o problema esta no spawn de powershell.exe ou na leitura",
+                "       dos ficheiros stdout. Partilha o app log para diagnostico."
+            )
+            return @{ lines = $lines }
+        }
+
         'UserInfo' {
             $username = if ($Params.username) { [string]$Params.username } else { '' }
             $email    = if ($Params.email) { [string]$Params.email } else { '' }
@@ -840,12 +865,32 @@ $wv.add_CoreWebView2InitializationCompleted({
                 default { throw "tipo desconhecido: $($msg.type)" }
             }
         } catch {
-            Write-AppLog "Dispatcher ERRO: $($_.Exception.Message)"
-            $reply = @{ id = $msg.id; ok = $false; error = $_.Exception.Message }
+            Write-AppLog "Dispatcher ERRO: $($_.Exception.Message)`n  at: $($_.ScriptStackTrace)"
+            $reply = @{ id = $msg.id; ok = $false; error = "Dispatcher: $($_.Exception.Message)" }
         }
-        if ($reply) {
+
+        # Safety net: garantir que SEMPRE enviamos uma resposta, mesmo que tudo falhe
+        if (-not $reply) {
+            Write-AppLog "REPLY nulo apos dispatch - criando resposta de erro default"
+            $reply = @{ id = $msg.id; ok = $false; error = 'Dispatcher terminou sem produzir resposta' }
+        }
+
+        try {
             $json = $reply | ConvertTo-Json -Depth 10 -Compress
+            $shortPreview = if ($json.Length -gt 300) { $json.Substring(0, 300) + '...' } else { $json }
+            Write-AppLog "REPLY ($($json.Length) chars) id=$($msg.id): $shortPreview"
             $s.PostWebMessageAsJson($json)
+            Write-AppLog "REPLY posted OK (id=$($msg.id))"
+        } catch {
+            Write-AppLog "REPLY FALHOU (id=$($msg.id)): $($_.Exception.Message)"
+            # Tentar enviar erro simples sem serializar $reply inteiro
+            try {
+                $fallbackJson = "{""id"":$($msg.id),""ok"":false,""error"":""PostWebMessageAsJson falhou: $($_.Exception.Message -replace '\"','\\\"')""}"
+                $s.PostWebMessageAsJson($fallbackJson)
+                Write-AppLog "REPLY fallback posted"
+            } catch {
+                Write-AppLog "REPLY fallback TAMBEM falhou: $($_.Exception.Message)"
+            }
         }
     })
 
