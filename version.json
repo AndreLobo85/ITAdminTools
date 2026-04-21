@@ -1,6 +1,6 @@
 {
-  "version": "1.0.16",
-  "releaseName": "IT Admin Toolkit - THE REAL FIX (JS-to-PS message format)",
+  "version": "1.0.17",
+  "releaseName": "IT Admin Toolkit - Grupos AD unificado (sem RSAT, com wildcards)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,8 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX CRITICO: o JS enviava window.chrome.webview.postMessage({obj}) - object -, que WebView2 entrega via WebMessageAsJson. O PS lia via TryGetWebMessageAsString() que devolvia null para object-messages, e o handler saia silenciosamente antes de qualquer log. Por isso nunca vimos WebMsg recv no log. Agora bridge.js envia JSON.stringify(obj) - string - que TryGetWebMessageAsString entrega correctamente",
-    "PS side: adicionado fallback que tenta tambem evArgs.WebMessageAsJson caso futuro codigo envie object",
-    "Log da versao das DLLs WebView2 no arranque (SDK 1.0.2365.x tem bug conhecido em WebMessageReceived)"
+    "Modulos Diagnostico de Grupo AD + Auditor de Grupos AD juntos num unico modulo Grupos AD. Aceita nome exacto (GPAMNR) ou padrao com wildcards (GNORMA*, *-ADMINS, GRP-?). Devolve sempre toda a info de cada grupo encontrado",
+    "get-diag-info-group.ps1 atualizado: suporta wildcards nativamente no LDAP filter, imprime sumario quando ha multiplos matches, cap a 50 resultados (configuravel via maxResults)",
+    "Removido Auditor de Grupos AD antigo - dependia de Get-ADGroup (RSAT), nao funcionava em PCs sem AD module instalado",
+    "Este modulo agora corre via ADSI (System.DirectoryServices) - funciona em qualquer PC no dominio"
   ]
 }

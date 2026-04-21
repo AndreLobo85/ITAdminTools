@@ -80,13 +80,13 @@ const ONPREM_MODULES = [
     file: 'get-diag-info-group.ps1',
     cat: 'Active Directory',
     icon: 'shield',
-    name: { pt: 'Diagnóstico de Grupo AD', en: 'AD Group Diagnostics' },
+    name: { pt: 'Grupos AD (pesquisa e diagnóstico)', en: 'AD Groups (search + diagnostics)' },
     desc: {
-      pt: 'Lê um grupo AD via ADSI (sem RSAT): scope, categoria, managedBy, memberOf e todos os membros (users com estado Enabled).',
-      en: 'Reads an AD group via ADSI (no RSAT): scope, category, managedBy, memberOf and every member (with user Enabled state).',
+      pt: 'Consulta grupos AD via ADSI (sem RSAT). Aceita nome exacto (GPAMNR) ou padrão com wildcards (GNORMA*, *-ADMINS, GRP-?). Devolve scope, categoria, managedBy, memberOf e todos os membros para cada match.',
+      en: 'Queries AD groups via ADSI (no RSAT). Accepts exact name (GPAMNR) or wildcard pattern (GNORMA*, *-ADMINS, GRP-?). Returns scope, category, managedBy, memberOf and all members per match.',
     },
     params: [
-      { id: 'groupName', label: { pt: 'Nome do grupo', en: 'Group name' }, placeholder: 'NB-IT-Sysadmins', required: true },
+      { id: 'groupName', label: { pt: 'Nome do grupo ou padrão', en: 'Group name or pattern' }, placeholder: 'GPAMNR  ou  GNORMA*  ou  *-ADMINS', required: true },
     ],
     runtime: 2.8,
     output: (p) => {
@@ -121,55 +121,6 @@ const ONPREM_MODULES = [
         sep,
         `[OK] 7 membros lidos em 1.9s | 1 desativado`,
       ];
-    },
-  },
-  {
-    id: 'ADGroupAuditor',
-    file: 'ADGroupAuditor.ps1',
-    cat: 'Active Directory',
-    icon: 'search',
-    name: { pt: 'Auditor de Grupos AD', en: 'AD Group Auditor' },
-    desc: {
-      pt: 'Descobre grupos por sufixo ou nome (com wildcards) e expande recursivamente membros e sub-grupos. Exporta Excel com 3 folhas (Resumo / Detalhe / Por Grupo).',
-      en: 'Finds groups by suffix or name (with wildcards) and recursively expands members and sub-groups. Exports 3-sheet Excel workbook (Summary / Detail / By Group).',
-    },
-    params: [
-      { id: 'mode', label: { pt: 'Modo de pesquisa', en: 'Search mode' }, type: 'select', options: [
-        { v: 'Suffix', l: { pt: 'Por sufixo', en: 'By suffix' } },
-        { v: 'Name',   l: { pt: 'Por nome (aceita *)', en: 'By name (wildcards)' } },
-      ], default: 'Suffix' },
-      { id: 'terms', label: { pt: 'Termos (separados por vírgula)', en: 'Terms (comma-separated)' }, placeholder: 'NF,NR  ou  HR_*', required: true },
-      { id: 'activeOnly', label: { pt: 'Apenas users activos (Enabled=True)', en: 'Active users only (Enabled=True)' }, type: 'check', default: false },
-    ],
-    runtime: 6.4,
-    output: (p) => {
-      const terms = (p.terms || 'NF,NR').split(',').map(t=>t.trim()).filter(Boolean);
-      const mode = p.mode === 'Name' ? 'nome' : 'sufixo';
-      const groups = mode === 'sufixo'
-        ? ['NB-FileShare-HR-NF','NB-FileShare-IT-NF','NB-App-SAP-NR','NB-Remote-NF','NB-Backup-NR']
-        : ['HR_Lisboa','HR_Porto','HR_Admins'];
-      const lines = [
-        `PS> .\\ADGroupAuditor.ps1 -Mode ${p.mode||'Suffix'} -Terms ${terms.join(',')}${p.activeOnly?' -ActiveOnly':''}`,
-        `[INFO] A procurar grupos por ${mode}: ${terms.join(', ')}`,
-        `[OK] ${groups.length} grupos-alvo encontrados`,
-        ``,
-        `  Grupo                       Scope        Category   Membros  Aninh.`,
-        `  --------------------------  -----------  ---------  -------  ------`,
-      ];
-      groups.forEach((g, i) => {
-        const mem = 8 + i*3;
-        lines.push(`  ${g.padEnd(27)} ${['Global','DomainLocal','Universal'][i%3].padEnd(12)} Security    ${String(mem).padStart(5)}     ${i%2===0?1:0}`);
-      });
-      lines.push(``);
-      lines.push(`[...] A expandir (1/${groups.length}): ${groups[0]}`);
-      lines.push(`[...] Batch LDAP de 100 DNs...`);
-      lines.push(`[...] A expandir (${groups.length}/${groups.length}): ${groups[groups.length-1]}`);
-      lines.push(``);
-      const totalLinhas = 127;
-      const usersDist = 84;
-      lines.push(`[OK] Concluido: ${groups.length} grupos | ${totalLinhas} linhas | ${usersDist} users distintos${p.activeOnly?' (apenas activos)':''}`);
-      lines.push(`[INFO] Disponivel para exportar: Excel (Resumo + Detalhe + Por Grupo) ou CSV`);
-      return lines;
     },
   },
   {

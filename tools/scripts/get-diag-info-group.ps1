@@ -3,17 +3,21 @@
 # Versao 1.0 sem RSAT - @Vitor Rodrigues (2021-05-04)
 # Versao 1.1 sem RSAT - @Higino Antunes  (2022-09-29) - adicao de campo DisplayName
 # Versao 1.2 sem RSAT - @Higino Antunes  (2024-06-03) - GroupType nativo, Group Scope, Group Category
+# Versao 1.3 sem RSAT - app (2026-04-21) - suporte a wildcards (ex: GRP-* ou *-ADMINS) + sumario + cap a 50 matches
 #--------------------------------------------------
 
 #requires -version 2
 
-param ($groupName = "")
+param ($groupName = "", [int]$maxResults = 50)
 
 Trap {"Error: $_"; Break;}
 
 if ($groupName -eq "") {
 "
-.\get-diag-info-group.ps1 -groupName GPAMNR  -> Info de um grupo por nome
+.\get-diag-info-group.ps1 -groupName GPAMNR           -> Info de um grupo por nome exacto
+.\get-diag-info-group.ps1 -groupName 'GNORMA*'        -> Procura todos os grupos comecados por GNORMA
+.\get-diag-info-group.ps1 -groupName '*-ADMINS'       -> Procura todos os grupos terminados em -ADMINS
+.\get-diag-info-group.ps1 -groupName 'GRP-*' -maxResults 100   -> Cap a 100 resultados (default 50)
 "
     return
 }
@@ -67,6 +71,8 @@ function Get-DirEntryProperty {
   }
 }
 
+$hasWildcard = $groupNameIn -match '\*|\?'
+
 write-progress $ScriptName "Enumerating groups"
 $domain = [ADSI] ""
 $searcher = [ADSISearcher] "(objectClass=group)"
@@ -75,10 +81,30 @@ $searcher.PageSize = $PageSize
 $searcher.SearchScope = "subtree"
 $searcher.PropertiesToLoad.AddRange(@("name","grouptype","distinguishedname","description","managedby","member","info","whencreated","memberof","whenchanged","DisplayName", "GroupScope", "GroupCategory"))
 $searcher.Filter = "(name="+$groupNameIn+")"
+$searcher.SizeLimit = $maxResults + 1
 $searchResults = $searcher.FindAll()
-$groupCounter = 0
 $groupCount = $searchResults.Count
+
+if ($groupCount -eq 0) {
+    ""
+    "[INFO] Nenhum grupo encontrado com padrao '$groupNameIn'"
+    $searchResults.Dispose()
+    return
+}
+
+if ($hasWildcard -or $groupCount -gt 1) {
+    ""
+    "[INFO] $groupCount grupo(s) encontrado(s) para padrao '$groupNameIn'"
+    if ($groupCount -gt $maxResults) {
+        "[WARN] Cap a $maxResults resultados. Restringe o padrao para ver tudo."
+    }
+    ""
+}
+
+$groupCounter = 0
 foreach ( $searchResult in $searchResults ) {
+  if ($groupCounter -ge $maxResults) { break }
+
   $properties = $searchResult.Properties
   $domainName = "BESP"
   $groupName = Get-SearchResultProperty $properties "name"
@@ -86,7 +112,7 @@ foreach ( $searchResult in $searchResults ) {
   $groupDisplayName = Get-SearchResultProperty $properties "DisplayName"
   $groupScope = Get-SearchResultProperty $properties "GroupScope"
   $groupCategory = Get-SearchResultProperty $properties "GroupCategory"
-  $groupDN = Get-SearchResultProperty $properties "GroupScope"
+  $groupDN = Get-SearchResultProperty $properties "distinguishedname"
   $groupManagedBy = Get-SearchResultProperty $properties "managedby"
   $groupType = Get-SearchResultProperty $properties "grouptype"
   if ($groupType -eq 2) {
