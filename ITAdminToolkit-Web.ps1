@@ -379,12 +379,19 @@ function Invoke-ScriptExternal {
     $tmpStdout = "$tmpBase.out.txt"
     $tmpStderr = "$tmpBase.err.txt"
 
-    # Construir argumentos
+    # Construir argumentos - switches passam sem valor quando $true, skip quando $false
     $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-NonInteractive','-File',$ScriptPath)
     foreach ($k in $Parameters.Keys) {
-        $v = [string]$Parameters[$k]
-        $argList += "-$k"
-        $argList += $v
+        $v = $Parameters[$k]
+        if ($v -is [bool] -or $v -is [switch]) {
+            if ($v) { $argList += "-$k" }
+            # se for $false, nao passa (switch default e $false)
+        } elseif ($null -eq $v -or '' -eq "$v") {
+            # skip valores vazios
+        } else {
+            $argList += "-$k"
+            $argList += [string]$v
+        }
     }
 
     $lines += "[DIAG] Executar processo externo:"
@@ -566,9 +573,15 @@ function Invoke-ToolRequest {
 
         'GroupInfo' {
             $g = [string]$Params.groupName
-            if (-not $g) { throw 'Indique o nome do grupo.' }
-            $scriptPath = Join-Path $ToolsDir 'scripts\get-diag-info-group.ps1'
-            $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters @{ groupName = $g } -TimeoutSeconds 60
+            if (-not $g) { throw 'Indique o nome / padrao / sufixos.' }
+            $scriptPath = Join-Path $ToolsDir 'scripts\audit-groups.ps1'
+            $p = @{ groupName = $g }
+            if ($Params.expand)     { $p['expand']     = [bool]$Params.expand }
+            if ($Params.activeOnly) { $p['activeOnly'] = [bool]$Params.activeOnly }
+            if ($Params.export)     { $p['export']     = [bool]$Params.export }
+            # expand + export pode demorar minutos para grupos com muitos users
+            $timeout = if ($Params.expand -or $Params.export) { 600 } else { 60 }
+            $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters $p -TimeoutSeconds $timeout
             return @{ lines = $lines }
         }
 
@@ -862,14 +875,9 @@ $wv.add_CoreWebView2InitializationCompleted({
         Write-AppLog "Injeccao APP_VERSION falhou: $($_.Exception.Message)"
     }
 
-    # DevTools no arranque (DEBUG MODE - v1.0.12: esta a investigar-se porque
-    # que a comunicacao PS<->JS nao funciona no PC do utilizador)
-    try {
-        $sender.CoreWebView2.OpenDevToolsWindow()
-        Write-AppLog "DevTools aberto (debug mode)"
-    } catch {
-        Write-AppLog "OpenDevToolsWindow falhou: $($_.Exception.Message)"
-    }
+    # DevTools auto-open desactivado a partir de v1.0.18 (bridge estavel).
+    # Para abrir manualmente: F12 na app, ou descomenta a linha abaixo.
+    # try { $sender.CoreWebView2.OpenDevToolsWindow() } catch {}
 
     # Garantir que web messages estao habilitados (default e $true, mas em
     # ambientes corporativos algumas politicas podem ter desligado)

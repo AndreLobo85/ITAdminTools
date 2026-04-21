@@ -77,16 +77,19 @@ const ONPREM_MODULES = [
   },
   {
     id: 'GroupInfo',
-    file: 'get-diag-info-group.ps1',
+    file: 'audit-groups.ps1',
     cat: 'Active Directory',
     icon: 'shield',
-    name: { pt: 'Grupos AD (pesquisa e diagnóstico)', en: 'AD Groups (search + diagnostics)' },
+    name: { pt: 'Grupos AD (pesquisa e auditoria)', en: 'AD Groups (search + audit)' },
     desc: {
-      pt: 'Consulta grupos AD via ADSI (sem RSAT). Aceita nome exacto (GPAMNR) ou padrão com wildcards (GNORMA*, *-ADMINS, GRP-?). Devolve scope, categoria, managedBy, memberOf e todos os membros para cada match.',
-      en: 'Queries AD groups via ADSI (no RSAT). Accepts exact name (GPAMNR) or wildcard pattern (GNORMA*, *-ADMINS, GRP-?). Returns scope, category, managedBy, memberOf and all members per match.',
+      pt: 'Pesquisa e auditoria de grupos AD via ADSI (sem RSAT). Nome exacto (GPAMNR), padrão com wildcards (GNORMA*, *-ADMINS) ou lista de sufixos (NR,NF). Expande grupos aninhados recursivamente e exporta para Excel com Resumo + Detalhe.',
+      en: 'AD group search and audit via ADSI (no RSAT). Exact name, wildcard pattern or suffix list. Recursively expands nested groups and exports to Excel.',
     },
     params: [
-      { id: 'groupName', label: { pt: 'Nome do grupo ou padrão', en: 'Group name or pattern' }, placeholder: 'GPAMNR  ou  GNORMA*  ou  *-ADMINS', required: true },
+      { id: 'groupName', label: { pt: 'Nome / padrão / sufixos', en: 'Name / pattern / suffixes' }, placeholder: 'GPAMNR  |  GNORMA*  |  *-ADMINS  |  NR,NF', required: true },
+      { id: 'expand', label: { pt: 'Expandir grupos aninhados (recursivo)', en: 'Expand nested groups recursively' }, type: 'check', default: false },
+      { id: 'activeOnly', label: { pt: 'Apenas users activos (Enabled=True)', en: 'Active users only (Enabled=True)' }, type: 'check', default: false },
+      { id: 'export', label: { pt: 'Exportar Excel no fim (abre automaticamente)', en: 'Export Excel at the end (auto-opens)' }, type: 'check', default: false },
     ],
     runtime: 2.8,
     output: (p) => {
