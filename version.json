@@ -1,6 +1,6 @@
 {
-  "version": "1.0.9",
-  "releaseName": "IT Admin Toolkit - external process + UI fixes",
+  "version": "1.0.10",
+  "releaseName": "IT Admin Toolkit - Start-Process redirect to files (fixes silent stdout)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,10 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX RADICAL: UserInfo e GroupInfo ja nao correm dentro do processo da app. Em vez disso spawn um powershell.exe 64-bit separado (-NonInteractive) e capturam stdout/stderr. Equivalente exacto a abrir uma consola nova e correr o script - zero interferencia do contexto WebView2/runspace. Se isto nao funcionar, o problema e de ambiente (rede/AD/permissoes), nao da app",
-    "Run desbloqueado ao mudar de modulo: ao navegar para outro script enquanto um estava a correr, o estado 'a executar' ja nao fica preso. O run em curso e cancelado automaticamente",
-    "Cabecalho de diagnostico no output: comando exacto spawned, exit code, tempo de execucao",
-    "Version badge no canto inferior esquerdo mostra sempre a versao instalada",
-    "Launchers forcam PowerShell 5.1 64-bit via SysNative (evita WOW64 redirect para 32-bit)"
+    "FIX CRITICO: o processo externo gerado em v1.0.9 produzia output mas a app nao o lia. Razao: usei Register-ObjectEvent com -Action, cujo scriptblock so corre quando a event queue do runspace principal e processada - mas o WaitForExit bloqueava essa queue, logo os eventos nunca eram executados e stdout ficava vazio",
+    "Substituido por Start-Process -RedirectStandardOutput/-RedirectStandardError para ficheiros temporarios. Sem eventos, sem deadlock, sem dependencia da event queue. O processo escreve directamente para os ficheiros, a app le-os depois do WaitForExit",
+    "Ficheiros temporarios (%TEMP%\\ITAdminToolkit-run-<id>.out.txt e .err.txt) nao sao apagados automaticamente - permitem post-mortem manual",
+    "Cabecalho DIAG no output inclui o caminho do ficheiro stdout para referencia"
   ]
 }

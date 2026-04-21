@@ -359,77 +359,75 @@ function Invoke-ScriptExternal {
         return ,@("[ERR] powershell.exe nao encontrado")
     }
 
-    # Construir argumentos - quotar valores com espacos
-    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-NonInteractive','-File',"`"$ScriptPath`"")
+    # Ficheiros temporarios para stdout/stderr. Esta abordagem evita o
+    # deadlock classico de redirect com pipes (sem event pump) e tambem
+    # o Register-ObjectEvent (cuja -Action depende da event queue do PS
+    # principal - que esta bloqueada enquanto esperamos pela saida).
+    $tmpBase   = Join-Path $env:TEMP "ITAdminToolkit-run-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+    $tmpStdout = "$tmpBase.out.txt"
+    $tmpStderr = "$tmpBase.err.txt"
+
+    # Construir argumentos
+    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-NonInteractive','-File',$ScriptPath)
     foreach ($k in $Parameters.Keys) {
         $v = [string]$Parameters[$k]
         $argList += "-$k"
-        $argList += "`"$v`""
+        $argList += $v
     }
-    $argStr = $argList -join ' '
 
     $lines += "[DIAG] Executar processo externo:"
-    $lines += "       $psExe $argStr"
+    $lines += "       $psExe " + (($argList | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } }) -join ' ')
+    $lines += "[DIAG] stdout -> $tmpStdout"
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName  = $psExe
-    $psi.Arguments = $argStr
-    $psi.UseShellExecute        = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError  = $true
-    $psi.CreateNoWindow         = $true
-    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
-    $psi.StandardErrorEncoding  = [System.Text.Encoding]::UTF8
-
-    $proc = New-Object System.Diagnostics.Process
-    $proc.StartInfo = $psi
-
-    $stdoutSb = New-Object System.Text.StringBuilder
-    $stderrSb = New-Object System.Text.StringBuilder
-    $outEvent = Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived `
-        -MessageData $stdoutSb -Action {
-            if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
-        }
-    $errEvent = Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived `
-        -MessageData $stderrSb -Action {
-            if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
-        }
+    $startT = [datetime]::UtcNow
+    $exitCode = -1
+    try {
+        # Start-Process com redirect para ficheiro. Sem deadlock de pipes,
+        # sem dependencia da event queue do PS.
+        $proc = Start-Process -FilePath $psExe -ArgumentList $argList `
+            -NoNewWindow -PassThru `
+            -RedirectStandardOutput $tmpStdout `
+            -RedirectStandardError  $tmpStderr `
+            -ErrorAction Stop
+    } catch {
+        $lines += "[ERR] Falha a lancar powershell.exe: $($_.Exception.Message)"
+        return ,$lines
+    }
 
     try {
-        $startT = [datetime]::UtcNow
-        [void]$proc.Start()
-        $proc.BeginOutputReadLine()
-        $proc.BeginErrorReadLine()
         $exited = $proc.WaitForExit($TimeoutSeconds * 1000)
         if (-not $exited) {
             try { $proc.Kill() } catch {}
-            $lines += "[ERR] Timeout apos ${TimeoutSeconds}s. Processo terminado forcosamente."
+            $lines += "[ERR] Timeout apos ${TimeoutSeconds}s. Processo terminado."
             return ,$lines
         }
-        # Pequena espera para flush assincrono
-        $proc.WaitForExit()
-        Start-Sleep -Milliseconds 80
-        $elapsed = [int]([datetime]::UtcNow - $startT).TotalMilliseconds
         $exitCode = $proc.ExitCode
-        $lines += "[DIAG] Exit code: $exitCode  |  Duracao: ${elapsed}ms"
-        $lines += ''
     } finally {
-        try { Unregister-Event -SourceIdentifier $outEvent.Name -Force -ErrorAction SilentlyContinue } catch {}
-        try { Unregister-Event -SourceIdentifier $errEvent.Name -Force -ErrorAction SilentlyContinue } catch {}
         try { $proc.Dispose() } catch {}
     }
 
-    $stdout = $stdoutSb.ToString()
-    $stderr = $stderrSb.ToString()
+    $elapsed = [int]([datetime]::UtcNow - $startT).TotalMilliseconds
+    $lines += "[DIAG] Exit code: $exitCode  |  Duracao: ${elapsed}ms"
+
+    # Ler os ficheiros agora que o processo terminou. Sem risco de deadlock.
+    $stdout = ''
+    $stderr = ''
+    try { if (Test-Path $tmpStdout) { $stdout = Get-Content -LiteralPath $tmpStdout -Raw -Encoding UTF8 } } catch {}
+    try { if (Test-Path $tmpStderr) { $stderr = Get-Content -LiteralPath $tmpStderr -Raw -Encoding UTF8 } } catch {}
+
+    $stdoutLen = if ($stdout) { $stdout.Length } else { 0 }
+    $stderrLen = if ($stderr) { $stderr.Length } else { 0 }
+    $lines += "[DIAG] stdout=$stdoutLen chars | stderr=$stderrLen chars"
+    $lines += ''
 
     $bodyCount = 0
     if ($stdout) {
-        foreach ($line in ($stdout -split "`r?`n")) {
-            # Nao descartar linhas vazias - o script usa-as como separadores visuais
-            if ($line -ne $null) { $lines += $line; $bodyCount++ }
+        $stdoutLines = $stdout -split "`r?`n"
+        # Remove ultima linha vazia resultante do split final
+        if ($stdoutLines.Count -gt 0 -and $stdoutLines[-1] -eq '') {
+            $stdoutLines = $stdoutLines[0..($stdoutLines.Count-2)]
         }
-        # Trim trailing empty line (do split final "`n")
-        if ($lines.Count -gt 0 -and $lines[-1] -eq '') { $lines = $lines[0..($lines.Count-2)] }
+        foreach ($line in $stdoutLines) { $lines += $line; $bodyCount++ }
     }
     if ($stderr -and $stderr.Trim()) {
         $lines += ''
@@ -440,12 +438,13 @@ function Invoke-ScriptExternal {
     }
 
     if ($bodyCount -eq 0 -and (-not $stderr -or -not $stderr.Trim())) {
-        $lines += '[WARN] O script correu mas nao produziu qualquer output nem erro.'
-        $lines += '       Na consola PS, o mesmo comando funciona?'
-        $lines += '       Se sim, ha algo no ambiente do spawn (variaveis de sessao, perfil, etc.)'
+        $lines += '[WARN] Processo externo terminou com exit 0 mas sem qualquer output nem erro.'
+        $lines += "       Ver ficheiros: $tmpStdout  e  $tmpStderr"
+        $lines += '       Se estao vazios, o script em si nao emitiu nada no ambiente do spawn.'
     }
 
-    Write-AppLog "External done: exit=$exitCode  stdoutChars=$($stdout.Length)  stderrChars=$($stderr.Length)"
+    # NAO apagamos os ficheiros temporarios - permitem post-mortem
+    Write-AppLog "External done: exit=$exitCode  stdout=$stdoutLen  stderr=$stderrLen  tmp=$tmpBase"
     return ,$lines
 }
 
