@@ -12,9 +12,9 @@
 #>
 
 param(
-    [string]$adminUpn = "",
     [string]$upns = "",
-    [switch]$includeRecov
+    [switch]$includeRecov,
+    [switch]$useDeviceCode
 )
 
 $ErrorActionPreference = 'Continue'
@@ -43,12 +43,35 @@ Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 
 $graphScopes = @('RoleManagement.Read.Directory','Directory.Read.All','User.Read')
 $graphParams = @{ Scopes = $graphScopes; NoWelcome = $true; ErrorAction = 'Stop' }
+if ($useDeviceCode) {
+    "[INFO] Device code auth activo. Vai aparecer URL + codigo no terminal."
+    "       Abre o URL num browser qualquer e cola o codigo."
+    $graphParams['UseDeviceAuthentication'] = $true
+}
+$graphConnected = $false
 try {
     Connect-MgGraph @graphParams | Out-Null
+    $graphConnected = $true
 } catch {
-    "[ERR] Connect-MgGraph falhou: $($_.Exception.Message)"
-    return
+    $errMsg = $_.Exception.Message
+    "[ERR] Connect-MgGraph falhou: $errMsg"
+    # Auto-fallback: se popup do browser falhou (perdido atras da app, cancelado
+    # por timeout, conditional access a bloquear), tentar device code
+    if (-not $useDeviceCode -and ($errMsg -match 'canceled|cancelled|timeout|not found|could not|closed')) {
+        ""
+        "[INFO] Auto-fallback para device code..."
+        "       Apareca URL + codigo aqui. Abre num browser e cola o codigo."
+        try {
+            $graphParams['UseDeviceAuthentication'] = $true
+            Connect-MgGraph @graphParams | Out-Null
+            $graphConnected = $true
+            "[OK] Device code auth bem sucedido."
+        } catch {
+            "[ERR] Device code auth tambem falhou: $($_.Exception.Message)"
+        }
+    }
 }
+if (-not $graphConnected) { return }
 
 # transitiveMemberOf/microsoft.graph.directoryRole devolve so roles ACTIVAS
 # (PIM eligible nao activadas nao aparecem aqui)
@@ -102,11 +125,27 @@ try { $alreadyConn = Get-ConnectionInformation -ErrorAction SilentlyContinue | W
 if (-not $alreadyConn) {
     "[INFO] A ligar a Exchange Online (popup de autenticacao vai aparecer)..."
     $exoParams = @{ ShowBanner = $false; ErrorAction = 'Stop' }
-    if ($adminUpn) { $exoParams.UserPrincipalName = $adminUpn }
+    if ($useDeviceCode) { $exoParams['Device'] = $true }
+    $exoConnected = $false
     try {
         Connect-ExchangeOnline @exoParams
+        $exoConnected = $true
     } catch {
-        "[ERR] Connect-ExchangeOnline falhou: $($_.Exception.Message)"
+        $errMsg = $_.Exception.Message
+        "[ERR] Connect-ExchangeOnline falhou: $errMsg"
+        if (-not $useDeviceCode -and ($errMsg -match 'canceled|cancelled|timeout|not found|could not|closed')) {
+            ""
+            "[INFO] Auto-fallback EXO para device code..."
+            try {
+                $exoParams['Device'] = $true
+                Connect-ExchangeOnline @exoParams
+                $exoConnected = $true
+            } catch {
+                "[ERR] Device code EXO tambem falhou: $($_.Exception.Message)"
+            }
+        }
+    }
+    if (-not $exoConnected) {
         try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
         return
     }

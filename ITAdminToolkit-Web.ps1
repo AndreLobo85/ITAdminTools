@@ -407,7 +407,11 @@ function Invoke-ScriptExternal {
     $tmpStderr = "$tmpBase.err.txt"
 
     # Construir argumentos - switches passam sem valor quando $true, skip quando $false
-    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-NonInteractive','-File',$ScriptPath)
+    # -NonInteractive removido: alguns fluxos MSAL/OAuth dependem de poder
+    # apresentar UI (mesmo que nao seja input no proprio PS). Para os scripts
+    # AD nao faz diferenca (nao pedem input); para MailboxStats (auth Graph/EXO)
+    # pode ser a diferenca entre o popup aparecer ou ser cancelado.
+    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$ScriptPath)
     foreach ($k in $Parameters.Keys) {
         $v = $Parameters[$k]
         if ($v -is [bool] -or $v -is [switch]) {
@@ -678,20 +682,19 @@ function Invoke-ToolRequest {
         }
 
         'MailboxStats' {
-            $adminUpn = [string]$Params.adminUpn
             $raw = [string]$Params.upns
             $includeRecov = [bool]$Params.includeRecov
+            $useDeviceCode = [bool]$Params.useDeviceCode
             if (-not $raw) { throw 'Indique pelo menos um UPN.' }
 
             # Spawn externo preferindo pwsh.exe (PS 7). Os modulos Microsoft.Graph
             # e ExchangeOnlineManagement sao tipicamente instalados em PS 7
             # (Documents\PowerShell\Modules\), nao em PS 5.1
-            # (Documents\WindowsPowerShell\Modules\) - por isso Invoke-ScriptInRunspace
-            # no processo PS 5.1 da app nao os encontrava.
+            # (Documents\WindowsPowerShell\Modules\).
             $scriptPath = Join-Path $ToolsDir 'scripts\audit-mailboxes.ps1'
             $p = @{ upns = $raw }
-            if ($adminUpn) { $p['adminUpn'] = $adminUpn }
-            if ($includeRecov) { $p['includeRecov'] = [bool]$includeRecov }
+            if ($includeRecov)   { $p['includeRecov']   = [bool]$includeRecov }
+            if ($useDeviceCode)  { $p['useDeviceCode']  = [bool]$useDeviceCode }
             $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters $p -TimeoutSeconds 600 -PreferPwsh
             return @{ lines = $lines }
         }

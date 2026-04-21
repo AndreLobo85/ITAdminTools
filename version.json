@@ -1,6 +1,6 @@
 {
-  "version": "1.0.20",
-  "releaseName": "IT Admin Toolkit - MailboxStats via pwsh.exe (PS 7 modules)",
+  "version": "1.0.21",
+  "releaseName": "IT Admin Toolkit - MailboxStats UX + device code fallback",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,9 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX: MailboxStats procurava Microsoft.Graph.Authentication em PS 5.1 (Documents\\WindowsPowerShell\\Modules\\). Quando o utilizador instalava em pwsh.exe via Install-Module, o modulo ia para Documents\\PowerShell\\Modules\\ - path diferente, PS 5.1 nao encontrava",
-    "Invoke-ScriptExternal aceita agora a switch -PreferPwsh. Quando esta activa, procura pwsh.exe em Program Files, Program Files (x86), LOCALAPPDATA e PATH. Fallback para powershell.exe (PS 5.1) se pwsh nao existir",
-    "Script tools/scripts/audit-mailboxes.ps1 extraido do dispatcher runspace anterior. MailboxStats dispatcher agora usa Invoke-ScriptExternal -PreferPwsh",
-    "Script imprime PSModulePath activa no cabecalho DIAG - facilita diagnostico de onde os modulos estao instalados"
+    "Removido campo 'Admin UPN' do MailboxStats - era redundante, pois o popup de autenticacao Microsoft ja tem selector de conta",
+    "Novo checkbox 'Usar device code auth' - util quando o popup do browser falha (perdido atras da janela, conditional access a bloquear, etc). Em vez do popup apresenta URL + codigo no terminal",
+    "Fallback automatico: se Connect-MgGraph ou Connect-ExchangeOnline falharem com 'User canceled' / 'timeout', a app tenta automaticamente device code",
+    "-NonInteractive removido dos argumentos do pwsh spawned - estava a impedir fluxos MSAL/OAuth que dependem de UI"
   ]
 }

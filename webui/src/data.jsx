@@ -187,9 +187,9 @@ const M365_MODULES = [
       en: 'Runs Get-MailboxStatistics for one or more UPNs via ExchangeOnlineManagement. Optionally includes RecoverableItems.',
     },
     params: [
-      { id: 'adminUpn', label: { pt: 'Admin UPN (ligação EXO)', en: 'Admin UPN (EXO connection)' }, placeholder: 'admin@novobanco.onmicrosoft.com' },
       { id: 'upns', label: { pt: 'UPN(s) a consultar (um por linha ou separados por vírgula)', en: 'UPN(s) to query (one per line or comma-separated)' }, type: 'textarea', placeholder: 'joao.silva@novobanco.pt\nana.martins@novobanco.pt', required: true },
       { id: 'includeRecov', label: { pt: 'Incluir RecoverableItems (mais lento)', en: 'Include RecoverableItems (slower)' }, type: 'check', default: true },
+      { id: 'useDeviceCode', label: { pt: 'Usar device code auth (se o popup do browser não funcionar)', en: 'Use device code auth (if browser popup fails)' }, type: 'check', default: false },
     ],
     runtime: 5.5,
     output: (p) => {
