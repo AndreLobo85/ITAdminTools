@@ -1,6 +1,6 @@
 {
-  "version": "1.0.14",
-  "releaseName": "IT Admin Toolkit - bridge version marker (upgrade verification)",
+  "version": "1.0.15",
+  "releaseName": "IT Admin Toolkit - explicit delegate + IsWebMessageEnabled + NavigationCompleted diag",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,7 +8,10 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "Inclui o fix da v1.0.13 (WebMessageReceived handler - $args conflict)",
-    "bridge.js agora imprime 'loading v1.0.14' no console - utilizador sabe visualmente que tem a versao nova (em v1.0.13 esqueci de actualizar esta string)"
+    "A renomeacao de $args para $evArgs nao resolveu. O handler continua a nao disparar. Nova tentativa com delegate explicito em vez de scriptblock implicito",
+    "Forcar CoreWebView2.Settings.IsWebMessageEnabled = $true antes de registar o handler (algumas politicas corporativas podem ter desligado)",
+    "Registar handler NavigationCompleted - confirma que a navegacao concluiu sem erros, e testa o canal PS->JS injectando um console.log",
+    "Try/catch explicito em torno do add_WebMessageReceived para capturar qualquer excepcao na registao",
+    "bridge.js: v1.0.15"
   ]
 }

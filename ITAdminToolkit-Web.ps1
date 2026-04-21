@@ -859,16 +859,41 @@ $wv.add_CoreWebView2InitializationCompleted({
         Write-AppLog "OpenDevToolsWindow falhou: $($_.Exception.Message)"
     }
 
-    # Handler de mensagens do JS
-    # NOTA: $args e $sender sao variaveis automaticas do PowerShell, e quando
-    # usadas como parametros de um scriptblock invocado via event delegate
-    # podem colidir com a variavel automatica (array de args posicionais),
-    # fazendo com que $args.TryGetWebMessageAsString() lance silenciosamente.
-    # Renomeei para $src / $evArgs para evitar qualquer ambiguidade.
-    $sender.CoreWebView2.add_WebMessageReceived({
-        param($src, $evArgs)
-        # LOG MUITO CEDO — garante que sabemos que o handler disparou
-        try { Write-AppLog "WebMsg handler: FIRED" } catch {}
+    # Garantir que web messages estao habilitados (default e $true, mas em
+    # ambientes corporativos algumas politicas podem ter desligado)
+    try {
+        $wmEnabledBefore = $sender.CoreWebView2.Settings.IsWebMessageEnabled
+        $sender.CoreWebView2.Settings.IsWebMessageEnabled = $true
+        Write-AppLog "IsWebMessageEnabled before=$wmEnabledBefore, forced=$($sender.CoreWebView2.Settings.IsWebMessageEnabled)"
+    } catch {
+        Write-AppLog "IsWebMessageEnabled falhou: $($_.Exception.Message)"
+    }
+
+    # Log de NavigationCompleted para confirmar que o documento carregou
+    try {
+        $sender.CoreWebView2.add_NavigationCompleted({
+            param($navSrc, $navArgs)
+            try {
+                Write-AppLog "NavigationCompleted: success=$($navArgs.IsSuccess) httpStatus=$($navArgs.HttpStatusCode) webErr=$($navArgs.WebErrorStatus)"
+                # Push PS->JS test message para verificar o outbound channel
+                $navSrc.ExecuteScriptAsync("console.log('[PS->JS] NavigationCompleted seen by PS');") | Out-Null
+            } catch { Write-AppLog "NavCompleted handler erro: $($_.Exception.Message)" }
+        })
+        Write-AppLog "NavigationCompleted handler registado"
+    } catch {
+        Write-AppLog "add_NavigationCompleted falhou: $($_.Exception.Message)"
+    }
+
+    # Handler de mensagens do JS - usar delegate tipado explicito em vez de
+    # scriptblock implicito (conversao implicita pode falhar silenciosamente
+    # em alguns builds PS 5.1)
+    Write-AppLog "A registar WebMessageReceived handler (delegate explicito)..."
+    try {
+        $sender.CoreWebView2.add_WebMessageReceived(
+            [EventHandler[Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs]]{
+                param($src, $evArgs)
+                # LOG MUITO CEDO — garante que sabemos que o handler disparou
+                try { Write-AppLog "WebMsg handler: FIRED" } catch {}
         try {
             $raw = $evArgs.TryGetWebMessageAsString()
         } catch {
@@ -944,7 +969,12 @@ $wv.add_CoreWebView2InitializationCompleted({
                 Write-AppLog "REPLY fallback TAMBEM falhou: $($_.Exception.Message)"
             }
         }
-    })
+        })
+        Write-AppLog "WebMessageReceived handler REGISTADO com sucesso"
+    } catch {
+        Write-AppLog "FALHOU a registar WebMessageReceived: $($_.Exception.Message)"
+        Write-AppLog "  Tipo: $($_.Exception.GetType().FullName)"
+    }
 
     # Navegar
     $sender.CoreWebView2.Navigate('https://app.local/index.html')
