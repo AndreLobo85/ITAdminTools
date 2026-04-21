@@ -1,6 +1,6 @@
 {
-  "version": "1.0.21",
-  "releaseName": "IT Admin Toolkit - MailboxStats UX + device code fallback",
+  "version": "1.0.22",
+  "releaseName": "IT Admin Toolkit - MailboxStats: apenas Connect-ExchangeOnline + Get-MailboxStatistics",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,9 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "Removido campo 'Admin UPN' do MailboxStats - era redundante, pois o popup de autenticacao Microsoft ja tem selector de conta",
-    "Novo checkbox 'Usar device code auth' - util quando o popup do browser falha (perdido atras da janela, conditional access a bloquear, etc). Em vez do popup apresenta URL + codigo no terminal",
-    "Fallback automatico: se Connect-MgGraph ou Connect-ExchangeOnline falharem com 'User canceled' / 'timeout', a app tenta automaticamente device code",
-    "-NonInteractive removido dos argumentos do pwsh spawned - estava a impedir fluxos MSAL/OAuth que dependem de UI"
+    "Removida completamente a validacao de role via Microsoft Graph que eu tinha adicionado. Causava um popup extra desnecessario porque o utilizador admin ja tem a role activa quando corre o Connect-ExchangeOnline diretamente",
+    "audit-mailboxes.ps1 agora faz exactamente o que o utilizador faz manualmente: Connect-ExchangeOnline -> Get-MailboxStatistics por UPN, com os campos userprincipalname, StorageLimitStatus, TotalItemSize, TotalDeletedItemSize, ItemCount, DeletedItemCount, RecoverableItems (se pedido)",
+    "Auto-fallback device-code mantido caso o popup do browser falhe",
+    "Nao e necessario Microsoft.Graph.Authentication instalado - so ExchangeOnlineManagement"
   ]
 }
