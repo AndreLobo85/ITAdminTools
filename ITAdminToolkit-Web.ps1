@@ -353,7 +353,12 @@ function Invoke-ScriptExternal {
     param(
         [Parameter(Mandatory)][string]$ScriptPath,
         [hashtable]$Parameters = @{},
-        [int]$TimeoutSeconds = 90
+        [int]$TimeoutSeconds = 90,
+        # Preferir pwsh.exe (PS 7) quando disponivel. Util quando o script
+        # depende de modulos instalados via `Install-Module -Scope CurrentUser`
+        # em pwsh, que vao para $Documents\PowerShell\Modules\ (nao
+        # $Documents\WindowsPowerShell\Modules\ que e o path do PS 5.1).
+        [switch]$PreferPwsh
     )
 
     $lines = @()
@@ -362,13 +367,35 @@ function Invoke-ScriptExternal {
         return ,@("[ERR] Script nao encontrado: $ScriptPath")
     }
 
-    # Resolve PowerShell.exe 64-bit.
-    $psExe = Join-Path $env:SystemRoot 'SysNative\WindowsPowerShell\v1.0\powershell.exe'
-    if (-not (Test-Path $psExe)) {
-        $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    # Resolve executavel do PowerShell
+    $psExe = $null
+    if ($PreferPwsh) {
+        # Procurar pwsh.exe em locais standard
+        $candidates = @(
+            (Join-Path ${env:ProgramFiles} 'PowerShell\7\pwsh.exe'),
+            (Join-Path ${env:ProgramFiles(x86)} 'PowerShell\7\pwsh.exe'),
+            (Join-Path ${env:LOCALAPPDATA} 'Microsoft\PowerShell\7\pwsh.exe')
+        )
+        foreach ($c in $candidates) {
+            if ($c -and (Test-Path $c)) { $psExe = $c; break }
+        }
+        if (-not $psExe) {
+            # Tentar no PATH
+            try {
+                $cmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($cmd) { $psExe = $cmd.Source }
+            } catch {}
+        }
+    }
+    if (-not $psExe) {
+        # Fallback: powershell.exe (PS 5.1) 64-bit via SysNative
+        $psExe = Join-Path $env:SystemRoot 'SysNative\WindowsPowerShell\v1.0\powershell.exe'
+        if (-not (Test-Path $psExe)) {
+            $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        }
     }
     if (-not (Test-Path $psExe)) {
-        return ,@("[ERR] powershell.exe nao encontrado")
+        return ,@("[ERR] Nao foi possivel localizar powershell.exe nem pwsh.exe")
     }
 
     # Ficheiros temporarios para stdout/stderr. Esta abordagem evita o
@@ -656,135 +683,16 @@ function Invoke-ToolRequest {
             $includeRecov = [bool]$Params.includeRecov
             if (-not $raw) { throw 'Indique pelo menos um UPN.' }
 
-            $upns = $raw -split '[\r\n,;]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique
-
-            # Corre tudo num runspace separado:
-            #  1) Valida via Microsoft.Graph que o user tem role Exchange Admin (ou superior) ACTIVA
-            #  2) So depois faz Connect-ExchangeOnline
-            #  3) Itera os UPNs e devolve estatisticas
-            #  Auth popups (Graph + EXO) sao spawnados fora da UI thread,
-            #  por isso aparecem visiveis e a UI nao bloqueia.
-            $sb = {
-                param([string]$AdminUpn, [string[]]$Upns, [bool]$IncludeRecov)
-
-                # ---- 1. Validacao de role (Microsoft Graph) ----
-                "[INFO] A validar roles activas do administrador (Microsoft Graph)..."
-                if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
-                    "[ERR] Modulo Microsoft.Graph.Authentication nao instalado."
-                    "      Para instalar: Install-Module Microsoft.Graph.Authentication -Scope CurrentUser"
-                    return
-                }
-                Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
-
-                $graphScopes = @('RoleManagement.Read.Directory','Directory.Read.All','User.Read')
-                $graphParams = @{ Scopes = $graphScopes; NoWelcome = $true; ErrorAction = 'Stop' }
-                try {
-                    Connect-MgGraph @graphParams | Out-Null
-                } catch {
-                    "[ERR] Connect-MgGraph falhou: $($_.Exception.Message)"
-                    return
-                }
-
-                # transitiveMemberOf/microsoft.graph.directoryRole devolve so roles ACTIVAS
-                # (PIM eligible nao activadas nao aparecem aqui)
-                try {
-                    $resp = Invoke-MgGraphRequest -Method GET -Uri 'https://graph.microsoft.com/v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole' -ErrorAction Stop
-                    $activeRoles = @($resp.value | ForEach-Object { $_.displayName })
-                } catch {
-                    "[ERR] Falha a ler roles via Graph: $($_.Exception.Message)"
-                    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
-                    return
-                }
-
-                $allowedRoles = @(
-                    'Exchange Administrator',
-                    'Exchange Recipient Administrator',
-                    'Global Administrator',
-                    'Global Reader'
-                )
-                $matched = @($activeRoles | Where-Object { $_ -in $allowedRoles })
-
-                if ($activeRoles.Count -eq 0) {
-                    "[ERR] Nao tens nenhuma directory role ACTIVA neste momento."
-                    "      Activa em PIM: https://portal.azure.com/#view/Microsoft_Azure_PIMCommon/ActivationMenuBlade"
-                    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
-                    return
-                }
-
-                "[INFO] Roles activas detectadas: $($activeRoles -join ', ')"
-
-                if ($matched.Count -eq 0) {
-                    "[ERR] Nenhuma role com acesso a Exchange Online esta ACTIVA."
-                    "      Roles aceites: $($allowedRoles -join ', ')"
-                    "      Activa Exchange Administrator em PIM antes de tentar de novo."
-                    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
-                    return
-                }
-
-                "[OK] Role permitida activa: $($matched -join ', ')"
-
-                # ---- 2. Connect Exchange Online ----
-                if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
-                    "[ERR] Modulo ExchangeOnlineManagement nao instalado."
-                    "      Install-Module ExchangeOnlineManagement -Scope CurrentUser"
-                    try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
-                    return
-                }
-                Import-Module ExchangeOnlineManagement -ErrorAction Stop
-
-                $alreadyConn = $null
-                try { $alreadyConn = Get-ConnectionInformation -ErrorAction SilentlyContinue | Where-Object State -eq 'Connected' | Select-Object -First 1 } catch {}
-                if (-not $alreadyConn) {
-                    "[INFO] A ligar a Exchange Online (popup de autenticacao vai aparecer)..."
-                    $exoParams = @{ ShowBanner = $false; ErrorAction = 'Stop' }
-                    if ($AdminUpn) { $exoParams.UserPrincipalName = $AdminUpn }
-                    try {
-                        Connect-ExchangeOnline @exoParams
-                    } catch {
-                        "[ERR] Connect-ExchangeOnline falhou: $($_.Exception.Message)"
-                        try { Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null } catch {}
-                        return
-                    }
-                    "[OK] Ligado a Exchange Online"
-                } else {
-                    "[INFO] Sessao Exchange Online ja activa, a reutilizar."
-                }
-
-                # ---- 3. Iterar UPNs ----
-                ""
-                "[INFO] Exchange Online - $($Upns.Count) mailbox(es)"
-                ""
-                foreach ($u in $Upns) {
-                    try {
-                        $stats = Get-MailboxStatistics -Identity $u -ErrorAction Stop
-                        "[OK] $u"
-                        "  DisplayName         : $($stats.DisplayName)"
-                        "  StorageLimitStatus  : $($stats.StorageLimitStatus)"
-                        "  TotalItemSize       : $($stats.TotalItemSize)"
-                        "  TotalDeletedItemSize: $($stats.TotalDeletedItemSize)"
-                        "  ItemCount           : $($stats.ItemCount)"
-                        "  DeletedItemCount    : $($stats.DeletedItemCount)"
-                        "  LastLogonTime       : $($stats.LastLogonTime)"
-                        if ($IncludeRecov) {
-                            try {
-                                $rec = Get-MailboxStatistics -Identity $u -FolderScope RecoverableItems -ErrorAction Stop
-                                "  RecoverableItems    : $($rec.TotalItemSize)"
-                            } catch {
-                                "  RecoverableItems    : (erro: $($_.Exception.Message))"
-                            }
-                        }
-                    } catch {
-                        "[ERR] $u :: $($_.Exception.Message)"
-                    }
-                    ""
-                }
-            }
-
-            $lines = Invoke-ScriptInRunspace -ScriptBlock $sb -Parameters @{
-                AdminUpn     = $adminUpn
-                Upns         = ,$upns
-                IncludeRecov = $includeRecov
-            }
+            # Spawn externo preferindo pwsh.exe (PS 7). Os modulos Microsoft.Graph
+            # e ExchangeOnlineManagement sao tipicamente instalados em PS 7
+            # (Documents\PowerShell\Modules\), nao em PS 5.1
+            # (Documents\WindowsPowerShell\Modules\) - por isso Invoke-ScriptInRunspace
+            # no processo PS 5.1 da app nao os encontrava.
+            $scriptPath = Join-Path $ToolsDir 'scripts\audit-mailboxes.ps1'
+            $p = @{ upns = $raw }
+            if ($adminUpn) { $p['adminUpn'] = $adminUpn }
+            if ($includeRecov) { $p['includeRecov'] = [bool]$includeRecov }
+            $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters $p -TimeoutSeconds 600 -PreferPwsh
             return @{ lines = $lines }
         }
 

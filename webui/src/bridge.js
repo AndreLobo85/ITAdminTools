@@ -7,7 +7,7 @@
 // funcionar normalmente).
 // ============================================================
 (function () {
-  const BRIDGE_VERSION = 'v1.0.19';
+  const BRIDGE_VERSION = 'v1.0.20';
   console.info('[bridge] loading ' + BRIDGE_VERSION);
 
   const hasHost = !!(window.chrome && window.chrome.webview);
