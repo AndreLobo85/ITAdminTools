@@ -122,7 +122,7 @@ const TerminalView = ({ lines, running, streaming, onClear, script, lang, params
   );
 };
 
-const Runner = ({ script, area, lang, onBack }) => {
+const Runner = ({ script, area, lang, onBack, requiresService, serviceConnected }) => {
   const s = window.STRINGS[lang];
   const [formValues, setFormValues] = useState(() => {
     const init = {};
@@ -153,7 +153,7 @@ const Runner = ({ script, area, lang, onBack }) => {
     setRunning(false);
   }, [script.id]);
 
-  const canRun = !running && (() => {
+  const canRun = !running && (requiresService ? serviceConnected : true) && (() => {
     // required fields
     for (const p of script.params) {
       if (p.required) {
@@ -248,6 +248,17 @@ const Runner = ({ script, area, lang, onBack }) => {
           </div>
         </div>
       </div>
+
+      {requiresService && !serviceConnected && (
+        <div className="needs-conn-banner">
+          <Icon name="info" size={16}/>
+          <div>
+            {lang === 'pt'
+              ? `Este módulo requer ligação a ${requiresService === 'exo' ? 'Exchange Online' : 'SharePoint Online'}. Clica em "Ligar" no topo primeiro.`
+              : `This module requires a ${requiresService === 'exo' ? 'Exchange Online' : 'SharePoint Online'} connection. Click "Connect" at the top first.`}
+          </div>
+        </div>
+      )}
 
       <div className="runner-body">
         <div>

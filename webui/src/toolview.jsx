@@ -1,5 +1,58 @@
 // ToolView — sidebar list + runner
-const { useState: useToolState, useMemo } = React;
+const { useState: useToolState, useMemo, useEffect: useToolEffect } = React;
+
+// Determina que servico M365 um modulo requer (retorna null se nenhum).
+// Serve para: (a) desactivar Run quando nao ha sessao, (b) mostrar barra
+// de ligacao apropriada no topo.
+function moduleRequiresService(mod) {
+  if (!mod) return null;
+  if (mod.cat === 'Exchange Online') return 'exo';
+  if (mod.cat === 'SharePoint Online') return 'spo';
+  return null;
+}
+
+const M365ConnectionBar = ({ lang, service, status, onConnect, onDisconnect, connecting, disconnecting, pendingLines }) => {
+  const label = service === 'exo' ? 'Exchange Online' : 'SharePoint Online';
+  const svcStatus = status ? status[service] : null;
+  const connected = !!(svcStatus && svcStatus.connected);
+  const upn = svcStatus && svcStatus.info ? svcStatus.info.upn : null;
+
+  return (
+    <div className="m365-conn-bar">
+      <div className="m365-conn-svc">
+        <div className={"m365-dot " + (connected ? 'ok' : 'off')}/>
+        <div>
+          <div className="m365-conn-title">{label}</div>
+          <div className="m365-conn-sub">
+            {connected
+              ? (lang === 'pt' ? `Ligado como ${upn}` : `Connected as ${upn}`)
+              : (connecting
+                  ? (lang === 'pt' ? 'A ligar...' : 'Connecting...')
+                  : (lang === 'pt' ? 'Não ligado' : 'Not connected'))}
+          </div>
+        </div>
+      </div>
+      <div className="m365-conn-actions">
+        {connected ? (
+          <button className="btn btn--ghost" onClick={onDisconnect} disabled={disconnecting}>
+            <Icon name="power" size={14}/>
+            {disconnecting ? (lang==='pt'?'A desligar...':'Disconnecting...') : (lang==='pt'?'Desligar':'Disconnect')}
+          </button>
+        ) : (
+          <button className="btn btn--primary" onClick={onConnect} disabled={connecting}>
+            <Icon name="power" size={14}/>
+            {connecting ? (lang==='pt'?'A ligar...':'Connecting...') : (lang==='pt'?'Ligar':'Connect')}
+          </button>
+        )}
+      </div>
+      {(connecting || (pendingLines && pendingLines.length > 0)) && (
+        <div className="m365-conn-log">
+          {pendingLines && pendingLines.map((l, i) => (<div key={i}>{l}</div>))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const ToolView = ({ area, lang, initialScriptId, onBack }) => {
   const s = window.STRINGS[lang];
@@ -10,6 +63,60 @@ const ToolView = ({ area, lang, initialScriptId, onBack }) => {
   const [query, setQuery] = useToolState('');
 
   const selected = modules.find(m => m.id === selectedId) || modules[0];
+
+  // M365 connection state (polling + manual refresh)
+  const [m365Status, setM365Status] = useToolState(null);
+  const [connecting, setConnecting] = useToolState(null);  // 'exo' | 'spo' | null
+  const [disconnecting, setDisconnecting] = useToolState(null);
+  const [connectLog, setConnectLog] = useToolState([]);
+
+  const requiredService = area === 'm365' ? moduleRequiresService(selected) : null;
+
+  const refreshM365Status = async () => {
+    if (!(window.bridge && window.bridge.available && window.bridge.m365Status)) return;
+    try {
+      const st = await window.bridge.m365Status();
+      setM365Status(st);
+    } catch {}
+  };
+
+  useToolEffect(() => {
+    if (area !== 'm365') return;
+    refreshM365Status();
+    const t = setInterval(refreshM365Status, 15000);
+    return () => clearInterval(t);
+  }, [area]);
+
+  const connectSvc = async (svc) => {
+    if (!window.bridge || !window.bridge.available) return;
+    setConnecting(svc);
+    setConnectLog([lang === 'pt' ? '[INFO] A iniciar pwsh.exe e Connect...' : '[INFO] Starting pwsh.exe and Connect...']);
+    try {
+      const r = await window.bridge.m365Connect(svc);
+      if (r && r.lines) setConnectLog(r.lines);
+      await refreshM365Status();
+    } catch (e) {
+      setConnectLog(prev => [...prev, '[ERR] ' + (e.message || e)]);
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  const disconnectSvc = async (svc) => {
+    if (!window.bridge || !window.bridge.available) return;
+    setDisconnecting(svc);
+    try {
+      await window.bridge.m365Disconnect(svc);
+      setConnectLog([]);
+      await refreshM365Status();
+    } catch (e) {
+      console.error('disconnect failed', e);
+    } finally {
+      setDisconnecting(null);
+    }
+  };
+
+  const svcConnected = requiredService && m365Status && m365Status[requiredService] && m365Status[requiredService].connected;
 
   const grouped = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -72,7 +179,28 @@ const ToolView = ({ area, lang, initialScriptId, onBack }) => {
         </div>
       </aside>
 
-      <Runner script={selected} area={area} lang={lang} onBack={onBack}/>
+      <div className="tool-view-main">
+        {requiredService && (
+          <M365ConnectionBar
+            lang={lang}
+            service={requiredService}
+            status={m365Status}
+            onConnect={() => connectSvc(requiredService)}
+            onDisconnect={() => disconnectSvc(requiredService)}
+            connecting={connecting === requiredService}
+            disconnecting={disconnecting === requiredService}
+            pendingLines={connecting === requiredService ? connectLog : []}
+          />
+        )}
+        <Runner
+          script={selected}
+          area={area}
+          lang={lang}
+          onBack={onBack}
+          requiresService={requiredService}
+          serviceConnected={!!svcConnected}
+        />
+      </div>
     </div>
   );
 };

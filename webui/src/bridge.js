@@ -7,7 +7,7 @@
 // funcionar normalmente).
 // ============================================================
 (function () {
-  const BRIDGE_VERSION = 'v1.0.22';
+  const BRIDGE_VERSION = 'v1.0.23';
   console.info('[bridge] loading ' + BRIDGE_VERSION);
 
   const hasHost = !!(window.chrome && window.chrome.webview);
@@ -81,7 +81,14 @@
     runTool: (toolId, params, onLine) =>
       send('RUN_TOOL', { toolId, params }, { timeoutMs: 0, onLine }),
     cancelTool: () => send('CANCEL_TOOL', {}, { timeoutMs: 5000 }),
-    getContext: () => send('GET_CONTEXT', {}, { timeoutMs: 5000 })
+    getContext: () => send('GET_CONTEXT', {}, { timeoutMs: 5000 }),
+    // M365 sessoes persistentes
+    m365Connect: (service, opts = {}) =>
+      send('M365_CONNECT', { service, ...opts }, { timeoutMs: 0 }),
+    m365Disconnect: (service) =>
+      send('M365_DISCONNECT', { service }, { timeoutMs: 15000 }),
+    m365Status: () =>
+      send('M365_STATUS', {}, { timeoutMs: 5000 })
   };
 
   console.info('[bridge] Ligado ao host PowerShell ' + BRIDGE_VERSION);

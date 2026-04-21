@@ -557,6 +557,234 @@ function Invoke-ScriptInline {
     return ,$lines
 }
 
+# ========== M365 Sessions: REPLs persistentes para Exchange Online / SharePoint ======
+# Cada servico tem um pwsh.exe filho mantido vivo apos o Connect. A sessao
+# (modulo importado, token OAuth, objectos internos) persiste entre comandos
+# - evita o overhead de ~10s de Import-Module + Connect por cada tool run.
+#
+# Protocolo: stdin line-delimited JSON; stdout emite markers
+#   <<<READY upn=... tenant=...>>>       - arranque OK
+#   <<<READY_ERROR msg=...>>>            - arranque falhou
+#   <<<DONE id=N ok=true|false>>>        - fim de resposta a um request
+
+$script:ExoProc = $null
+$script:ExoReady = $false
+$script:ExoInfo = $null      # @{ upn = '...'; tenant = '...' }
+$script:ExoStartupLines = @()
+
+$script:SpoProc = $null
+$script:SpoReady = $false
+$script:SpoInfo = $null
+$script:SpoStartupLines = @()
+
+function Resolve-PwshExe {
+    $candidates = @(
+        (Join-Path ${env:ProgramFiles} 'PowerShell\7\pwsh.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'PowerShell\7\pwsh.exe'),
+        (Join-Path ${env:LOCALAPPDATA} 'Microsoft\PowerShell\7\pwsh.exe')
+    )
+    foreach ($c in $candidates) { if ($c -and (Test-Path $c)) { return $c } }
+    try {
+        $cmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cmd) { return $cmd.Source }
+    } catch {}
+    return $null
+}
+
+function Start-M365Repl {
+    param(
+        [Parameter(Mandatory)][ValidateSet('exo','spo')][string]$Service,
+        [switch]$UseDeviceCode,
+        [hashtable]$Extra = @{}
+    )
+
+    $pwsh = Resolve-PwshExe
+    if (-not $pwsh) {
+        return @{ ok = $false; lines = @('[ERR] pwsh.exe (PowerShell 7) nao encontrado neste PC. Instala PS 7 para usar M365.') }
+    }
+
+    $scriptPath = Join-Path $ToolsDir "scripts\$Service-repl.ps1"
+    if (-not (Test-Path $scriptPath)) {
+        return @{ ok = $false; lines = @("[ERR] Script REPL nao encontrado: $scriptPath") }
+    }
+
+    # Build args
+    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$scriptPath)
+    if ($UseDeviceCode) { $argList += '-useDeviceCode' }
+    foreach ($k in $Extra.Keys) {
+        $v = [string]$Extra[$k]
+        if ($v) { $argList += "-$k"; $argList += $v }
+    }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $pwsh
+    foreach ($a in $argList) { $null = $psi.ArgumentList.Add($a) }
+    $psi.UseShellExecute        = $false
+    $psi.RedirectStandardInput  = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+    $psi.CreateNoWindow         = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+    Write-AppLog "Starting M365 REPL ($Service): $pwsh $($argList -join ' ')"
+    try {
+        [void]$proc.Start()
+    } catch {
+        return @{ ok = $false; lines = @("[ERR] Falha a lancar pwsh.exe: $($_.Exception.Message)") }
+    }
+
+    # Read stdout until <<<READY ...>>> or <<<READY_ERROR ...>>>
+    # Timeout: 180s (user pode demorar a responder ao popup)
+    $startupLines = @()
+    $readyInfo = $null
+    $readyError = $null
+    $deadline = (Get-Date).AddSeconds(180)
+
+    while ((Get-Date) -lt $deadline -and -not $proc.HasExited) {
+        $line = $proc.StandardOutput.ReadLine()
+        if ($null -eq $line) { break }
+        Write-AppLog "EXO-REPL stdout: $line"
+        if ($line -match '^<<<READY upn=(.+?) tenant=(.+?)>>>$') {
+            $readyInfo = @{ upn = $Matches[1]; tenant = $Matches[2] }
+            break
+        }
+        if ($line -match '^<<<READY_ERROR msg=(.+)>>>$') {
+            $readyError = $Matches[1]
+            break
+        }
+        $startupLines += $line
+    }
+
+    if ($readyInfo) {
+        if ($Service -eq 'exo') {
+            $script:ExoProc = $proc
+            $script:ExoReady = $true
+            $script:ExoInfo = $readyInfo
+            $script:ExoStartupLines = $startupLines
+        } elseif ($Service -eq 'spo') {
+            $script:SpoProc = $proc
+            $script:SpoReady = $true
+            $script:SpoInfo = $readyInfo
+            $script:SpoStartupLines = $startupLines
+        }
+        return @{
+            ok = $true
+            lines = $startupLines + @("[OK] Ligado como $($readyInfo.upn)")
+            info = $readyInfo
+        }
+    }
+
+    # Falhou - matar processo e devolver erro
+    try { if (-not $proc.HasExited) { $proc.Kill() } } catch {}
+    $errMsg = if ($readyError) { $readyError } else { 'startup timeout' }
+    return @{
+        ok = $false
+        lines = $startupLines + @("[ERR] REPL $Service nao arrancou: $errMsg")
+    }
+}
+
+function Stop-M365Repl {
+    param([ValidateSet('exo','spo')][string]$Service)
+
+    $proc = if ($Service -eq 'exo') { $script:ExoProc } else { $script:SpoProc }
+    if (-not $proc -or $proc.HasExited) {
+        # Reset state
+        if ($Service -eq 'exo') { $script:ExoProc = $null; $script:ExoReady = $false; $script:ExoInfo = $null }
+        else { $script:SpoProc = $null; $script:SpoReady = $false; $script:SpoInfo = $null }
+        return @{ ok = $true; lines = @("[INFO] $Service nao estava ligado.") }
+    }
+
+    $lines = @()
+    try {
+        $req = @{ id = 0; type = 'exit' } | ConvertTo-Json -Compress
+        $proc.StandardInput.WriteLine($req)
+        $proc.StandardInput.Flush()
+        # Esperar ate 10s pelo processo terminar
+        if (-not $proc.WaitForExit(10000)) {
+            try { $proc.Kill() } catch {}
+            $lines += "[WARN] REPL nao terminou em 10s, matado forcosamente."
+        } else {
+            $lines += "[OK] $Service desligado."
+        }
+    } catch {
+        $lines += "[WARN] Exit nao completou: $($_.Exception.Message)"
+        try { $proc.Kill() } catch {}
+    }
+
+    if ($Service -eq 'exo') { $script:ExoProc = $null; $script:ExoReady = $false; $script:ExoInfo = $null }
+    else { $script:SpoProc = $null; $script:SpoReady = $false; $script:SpoInfo = $null }
+    return @{ ok = $true; lines = $lines }
+}
+
+function Test-M365Session {
+    param([ValidateSet('exo','spo')][string]$Service)
+    $proc = if ($Service -eq 'exo') { $script:ExoProc } else { $script:SpoProc }
+    $ready = if ($Service -eq 'exo') { $script:ExoReady } else { $script:SpoReady }
+    $info = if ($Service -eq 'exo') { $script:ExoInfo } else { $script:SpoInfo }
+    return @{
+        connected = ($ready -and $proc -and -not $proc.HasExited)
+        info = $info
+    }
+}
+
+$script:M365ReqSeq = 0
+function Invoke-M365Command {
+    param(
+        [Parameter(Mandatory)][ValidateSet('exo','spo')][string]$Service,
+        [Parameter(Mandatory)][string]$Script,
+        [int]$TimeoutSeconds = 120
+    )
+
+    $proc = if ($Service -eq 'exo') { $script:ExoProc } else { $script:SpoProc }
+    if (-not $proc -or $proc.HasExited) {
+        return @{ ok = $false; lines = @("[ERR] $Service nao esta ligado. Clica 'Ligar' primeiro.") }
+    }
+
+    $script:M365ReqSeq++
+    $reqId = $script:M365ReqSeq
+    $req = @{ id = $reqId; type = 'run'; script = $Script } | ConvertTo-Json -Compress -Depth 10
+    Write-AppLog "M365 REPL($Service) request id=$reqId  len=$($req.Length)"
+    try {
+        $proc.StandardInput.WriteLine($req)
+        $proc.StandardInput.Flush()
+    } catch {
+        return @{ ok = $false; lines = @("[ERR] Falha a escrever stdin: $($_.Exception.Message)") }
+    }
+
+    $outLines = @()
+    $ok = $null
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+
+    while ((Get-Date) -lt $deadline) {
+        if ($proc.HasExited) {
+            return @{ ok = $false; lines = $outLines + @("[ERR] REPL $Service morreu durante o comando.") }
+        }
+        $line = $proc.StandardOutput.ReadLine()
+        if ($null -eq $line) {
+            Start-Sleep -Milliseconds 50
+            continue
+        }
+        if ($line -match '^<<<DONE id=(\d+) ok=(true|false)>>>$') {
+            $respId = [int]$Matches[1]
+            $ok = ($Matches[2] -eq 'true')
+            if ($respId -ne $reqId) {
+                Write-AppLog "M365 REPL($Service) WARN: reqId $reqId / respId $respId"
+            }
+            break
+        }
+        $outLines += $line
+    }
+
+    if ($null -eq $ok) {
+        # Timeout
+        return @{ ok = $false; lines = $outLines + @("[ERR] Timeout ${TimeoutSeconds}s aguardando resposta do REPL $Service.") }
+    }
+
+    return @{ ok = $ok; lines = $outLines }
+}
+
 # ========== Dispatcher: recebe (toolId, params) e devolve @{ lines = [...] } ==========
 function Invoke-ToolRequest {
     param([string]$ToolId, [hashtable]$Params)
@@ -684,19 +912,60 @@ function Invoke-ToolRequest {
         'MailboxStats' {
             $raw = [string]$Params.upns
             $includeRecov = [bool]$Params.includeRecov
-            $useDeviceCode = [bool]$Params.useDeviceCode
             if (-not $raw) { throw 'Indique pelo menos um UPN.' }
 
-            # Spawn externo preferindo pwsh.exe (PS 7). Os modulos Microsoft.Graph
-            # e ExchangeOnlineManagement sao tipicamente instalados em PS 7
-            # (Documents\PowerShell\Modules\), nao em PS 5.1
-            # (Documents\WindowsPowerShell\Modules\).
-            $scriptPath = Join-Path $ToolsDir 'scripts\audit-mailboxes.ps1'
-            $p = @{ upns = $raw }
-            if ($includeRecov)   { $p['includeRecov']   = [bool]$includeRecov }
-            if ($useDeviceCode)  { $p['useDeviceCode']  = [bool]$useDeviceCode }
-            $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters $p -TimeoutSeconds 600 -PreferPwsh
-            return @{ lines = $lines }
+            # Requer sessao EXO persistente (botao Ligar no topo do modulo)
+            $sess = Test-M365Session -Service 'exo'
+            if (-not $sess.connected) {
+                return @{ lines = @(
+                    '[ERR] Nao ha sessao Exchange Online activa.',
+                    '      Clica em "Ligar a Exchange Online" no topo antes de correr este tool.'
+                )}
+            }
+
+            $upnList = $raw -split '[\r\n,;]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique
+            $allLines = @()
+            $allLines += "[INFO] Sessao activa como: $($sess.info.upn)"
+            $allLines += "[INFO] A consultar $($upnList.Count) mailbox(es)..."
+            $allLines += ''
+
+            foreach ($u in $upnList) {
+                # Construir script para o REPL - equivalente ao comando manual:
+                # Get-MailboxStatistics <upn> | Select-Object <campos>
+                $recClause = if ($includeRecov) {
+                    @"
+                    try {
+                        `$rec = Get-MailboxStatistics -Identity '$u' -FolderScope RecoverableItems -ErrorAction Stop
+                        "  RecoverableItems     : " + `$rec.TotalItemSize
+                    } catch {
+                        "  RecoverableItems     : (erro: " + `$_.Exception.Message + ")"
+                    }
+"@
+                } else { '' }
+
+                $ps = @"
+try {
+    `$s = Get-MailboxStatistics -Identity '$u' -ErrorAction Stop
+    "[OK] $u"
+    "  DisplayName          : " + `$s.DisplayName
+    "  UserPrincipalName    : $u"
+    "  StorageLimitStatus   : " + `$s.StorageLimitStatus
+    "  TotalItemSize        : " + `$s.TotalItemSize
+    "  TotalDeletedItemSize : " + `$s.TotalDeletedItemSize
+    "  ItemCount            : " + `$s.ItemCount
+    "  DeletedItemCount     : " + `$s.DeletedItemCount
+    "  LastLogonTime        : " + `$s.LastLogonTime
+$recClause
+} catch {
+    "[ERR] $u :: " + `$_.Exception.Message
+}
+""
+"@
+                $r = Invoke-M365Command -Service 'exo' -Script $ps -TimeoutSeconds 60
+                $allLines += $r.lines
+            }
+
+            return @{ lines = $allLines }
         }
 
         'SharePointSite' {
@@ -885,6 +1154,33 @@ $wv.add_CoreWebView2InitializationCompleted({
                     Stop-RunningScript
                     $reply = @{ id = $msg.id; ok = $true; result = @{ cancelled = $true } }
                 }
+                'M365_CONNECT' {
+                    $svc = [string]$msg.service
+                    if ($svc -notin @('exo','spo')) { throw "M365_CONNECT: servico invalido '$svc'" }
+                    $useDev = [bool]$msg.useDeviceCode
+                    $extra = @{}
+                    if ($msg.siteUrl) { $extra['siteUrl'] = [string]$msg.siteUrl }
+                    if ($msg.tenantAdminUrl) { $extra['tenantAdminUrl'] = [string]$msg.tenantAdminUrl }
+                    $r = Start-M365Repl -Service $svc -UseDeviceCode:$useDev -Extra $extra
+                    $reply = @{ id = $msg.id; ok = [bool]$r.ok; result = @{
+                        lines = $r.lines
+                        info  = $r.info
+                    }}
+                }
+                'M365_DISCONNECT' {
+                    $svc = [string]$msg.service
+                    if ($svc -notin @('exo','spo')) { throw "M365_DISCONNECT: servico invalido '$svc'" }
+                    $r = Stop-M365Repl -Service $svc
+                    $reply = @{ id = $msg.id; ok = [bool]$r.ok; result = @{ lines = $r.lines } }
+                }
+                'M365_STATUS' {
+                    $exo = Test-M365Session -Service 'exo'
+                    $spo = Test-M365Session -Service 'spo'
+                    $reply = @{ id = $msg.id; ok = $true; result = @{
+                        exo = @{ connected = [bool]$exo.connected; info = $exo.info }
+                        spo = @{ connected = [bool]$spo.connected; info = $spo.info }
+                    }}
+                }
                 default { throw "tipo desconhecido: $($msg.type)" }
             }
         } catch {
@@ -939,5 +1235,25 @@ Write-AppLog "Environment criado. EnsureCoreWebView2Async..."
 $wv.EnsureCoreWebView2Async($wvEnv) | Out-Null
 
 Write-AppLog "Application.Run..."
+
+# Cleanup dos REPLs M365 quando a app fechar
+$form.add_FormClosing({
+    param($s, $e)
+    Write-AppLog "FormClosing: a fechar REPLs M365..."
+    foreach ($svc in @('exo','spo')) {
+        try {
+            $proc = if ($svc -eq 'exo') { $script:ExoProc } else { $script:SpoProc }
+            if ($proc -and -not $proc.HasExited) {
+                $req = @{ id = 0; type = 'exit' } | ConvertTo-Json -Compress
+                try { $proc.StandardInput.WriteLine($req); $proc.StandardInput.Flush() } catch {}
+                if (-not $proc.WaitForExit(3000)) {
+                    try { $proc.Kill() } catch {}
+                }
+                Write-AppLog "REPL $svc terminado no close"
+            }
+        } catch { Write-AppLog "Cleanup REPL $svc falhou: $($_.Exception.Message)" }
+    }
+})
+
 [System.Windows.Forms.Application]::Run($form)
 Write-AppLog "Application.Run devolveu"

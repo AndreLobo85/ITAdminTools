@@ -1,6 +1,6 @@
 {
-  "version": "1.0.22",
-  "releaseName": "IT Admin Toolkit - MailboxStats: apenas Connect-ExchangeOnline + Get-MailboxStatistics",
+  "version": "1.0.23",
+  "releaseName": "IT Admin Toolkit - sessao persistente EXO (Connect explicito + reutilizacao)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,9 +8,11 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "Removida completamente a validacao de role via Microsoft Graph que eu tinha adicionado. Causava um popup extra desnecessario porque o utilizador admin ja tem a role activa quando corre o Connect-ExchangeOnline diretamente",
-    "audit-mailboxes.ps1 agora faz exactamente o que o utilizador faz manualmente: Connect-ExchangeOnline -> Get-MailboxStatistics por UPN, com os campos userprincipalname, StorageLimitStatus, TotalItemSize, TotalDeletedItemSize, ItemCount, DeletedItemCount, RecoverableItems (se pedido)",
-    "Auto-fallback device-code mantido caso o popup do browser falhe",
-    "Nao e necessario Microsoft.Graph.Authentication instalado - so ExchangeOnlineManagement"
+    "Novos modulos M365 tem barra de ligacao persistente no topo: botao Ligar faz Connect-ExchangeOnline UMA vez, depois os tools reusam a sessao. Stdin/stdout pipe para um pwsh.exe (PS 7) mantido vivo",
+    "MailboxStats agora: clicas Ligar (popup Microsoft uma vez), depois cada consulta de mailbox e quase instantanea - sem novo Connect, sem overhead de Import-Module",
+    "Run desactivado quando nao ha sessao activa no servico. Banner amarelo a indicar",
+    "REPLs sao terminados automaticamente quando a app fecha (FormClosing handler)",
+    "Status da sessao actualizado automaticamente a cada 15s (detecta quedas de conexao)",
+    "SharePoint Online: base preparada, REPL spo-repl.ps1 ainda por criar (SharePointSite a funcionar como antes na proxima release)"
   ]
 }
