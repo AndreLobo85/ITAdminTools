@@ -1,6 +1,6 @@
 {
-  "version": "1.0.26",
-  "releaseName": "IT Admin Toolkit - Ligar EXO abre janela pwsh visivel (comportamento manual)",
+  "version": "1.0.27",
+  "releaseName": "IT Admin Toolkit - Ligar SharePoint Online + audit via pwsh.exe",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,8 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX: o botao Ligar ao Exchange Online agora abre uma janela pwsh.exe VISIVEL com Connect-ExchangeOnline - exactamente o que acontece quando o utilizador corre o comando manualmente. O popup Microsoft aparece nessa janela, user autentica, sessao fica activa na janela (-NoExit)",
-    "REPL persistente abandonado: tinha demasiados modos de falhar silenciosamente (stdio pipes redireccionados, CreateNoWindow a esconder popups, etc). Abordagem simples: visible window + MSAL cache",
-    "MailboxStats agora re-utiliza audit-mailboxes.ps1: spawn hidden pwsh.exe que faz Connect-ExchangeOnline silenciosamente via cache MSAL (populada pelo user autenticar na janela do Ligar), depois Get-MailboxStatistics"
+    "Novo botao Ligar SharePoint Online na connection bar dos modulos SharePoint Online. Abre janela pwsh.exe visivel com Connect-PnPOnline -Interactive, popup Microsoft aparece, user autentica",
+    "Campo Tenant Admin URL / Site URL na barra de ligacao. Default: https://bdso-admin.sharepoint.com. Usar o URL que pretendes connectar (admin para tenant-level, site URL para site especifico)",
+    "Requer modulo PnP.PowerShell (Install-Module PnP.PowerShell -Scope CurrentUser)",
+    "Modulo SharePointSite (Site Members) agora spawn pwsh.exe externo com novo script audit-spo-site.ps1 que reusa a sessao MSAL. Antes corria em PS 5.1 o que falhava quando PnP estava instalado em PS 7"
   ]
 }

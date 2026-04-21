@@ -17,6 +17,17 @@ const M365ConnectionBar = ({ lang, service, status, onConnect, onDisconnect, con
   const connected = !!(svcStatus && svcStatus.connected);
   const upn = svcStatus && svcStatus.info ? svcStatus.info.upn : null;
 
+  // SPO precisa de URL (admin ou site) para Connect-PnPOnline
+  const [spoUrl, setSpoUrl] = React.useState('https://bdso-admin.sharepoint.com');
+
+  const handleConnect = () => {
+    if (service === 'spo') {
+      onConnect({ siteUrl: spoUrl });
+    } else {
+      onConnect();
+    }
+  };
+
   return (
     <div className="m365-conn-bar">
       <div className="m365-conn-svc">
@@ -32,6 +43,21 @@ const M365ConnectionBar = ({ lang, service, status, onConnect, onDisconnect, con
           </div>
         </div>
       </div>
+      {service === 'spo' && !connected && (
+        <div className="m365-spo-url">
+          <label style={{fontSize:11, color:'var(--text-dim)', marginBottom:3, display:'block'}}>
+            {lang === 'pt' ? 'Tenant Admin URL ou Site URL' : 'Tenant Admin URL or Site URL'}
+          </label>
+          <input
+            type="text"
+            value={spoUrl}
+            onChange={e => setSpoUrl(e.target.value)}
+            placeholder="https://bdso-admin.sharepoint.com"
+            style={{minWidth:320}}
+            spellCheck={false}
+          />
+        </div>
+      )}
       <div className="m365-conn-actions">
         {connected ? (
           <button className="btn btn--ghost" onClick={onDisconnect} disabled={disconnecting}>
@@ -39,7 +65,7 @@ const M365ConnectionBar = ({ lang, service, status, onConnect, onDisconnect, con
             {disconnecting ? (lang==='pt'?'A desligar...':'Disconnecting...') : (lang==='pt'?'Desligar':'Disconnect')}
           </button>
         ) : (
-          <button className="btn btn--primary" onClick={onConnect} disabled={connecting}>
+          <button className="btn btn--primary" onClick={handleConnect} disabled={connecting}>
             <Icon name="power" size={14}/>
             {connecting ? (lang==='pt'?'A ligar...':'Connecting...') : (lang==='pt'?'Ligar':'Connect')}
           </button>
@@ -87,12 +113,12 @@ const ToolView = ({ area, lang, initialScriptId, onBack }) => {
     return () => clearInterval(t);
   }, [area]);
 
-  const connectSvc = async (svc) => {
+  const connectSvc = async (svc, opts = {}) => {
     if (!window.bridge || !window.bridge.available) return;
     setConnecting(svc);
     setConnectLog([lang === 'pt' ? '[INFO] A iniciar pwsh.exe e Connect...' : '[INFO] Starting pwsh.exe and Connect...']);
     try {
-      const r = await window.bridge.m365Connect(svc);
+      const r = await window.bridge.m365Connect(svc, opts);
       if (r && r.lines) setConnectLog(r.lines);
       await refreshM365Status();
     } catch (e) {
@@ -185,7 +211,7 @@ const ToolView = ({ area, lang, initialScriptId, onBack }) => {
             lang={lang}
             service={requiredService}
             status={m365Status}
-            onConnect={() => connectSvc(requiredService)}
+            onConnect={(opts) => connectSvc(requiredService, opts)}
             onDisconnect={() => disconnectSvc(requiredService)}
             connecting={connecting === requiredService}
             disconnecting={disconnecting === requiredService}

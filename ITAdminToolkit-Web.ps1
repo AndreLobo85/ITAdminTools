@@ -634,15 +634,35 @@ try {
 }
 '@
     } elseif ($Service -eq 'spo') {
-        $siteUrl = if ($Extra.siteUrl) { $Extra.siteUrl } else { '' }
+        $siteUrl = if ($Extra.siteUrl) { [string]$Extra.siteUrl } else { 'https://bdso-admin.sharepoint.com' }
+        # Escapar aspas simples no URL (improvavel mas defensivo)
+        $siteUrlEsc = $siteUrl -replace "'", "''"
         $cmd = @"
 Write-Host "`n=== IT Admin Toolkit - Connect SharePoint Online ===" -ForegroundColor Cyan
+Write-Host "ApartmentState: `$([System.Threading.Thread]::CurrentThread.GetApartmentState())"
+Write-Host "URL: $siteUrl"
+if (-not (Get-Module -ListAvailable -Name PnP.PowerShell)) {
+    Write-Host "[ERR] Modulo PnP.PowerShell nao instalado." -ForegroundColor Red
+    Write-Host "Para instalar: Install-Module PnP.PowerShell -Scope CurrentUser" -ForegroundColor Yellow
+    pause
+    return
+}
 Import-Module PnP.PowerShell -ErrorAction Stop
+Write-Host "A abrir popup de autenticacao Microsoft..." -ForegroundColor Yellow
 try {
-    Connect-PnPOnline -Url '$siteUrl' -Interactive -ErrorAction Stop
-    Write-Host "`n[OK] Ligado ao SharePoint." -ForegroundColor Green
+    Connect-PnPOnline -Url '$siteUrlEsc' -Interactive -ErrorAction Stop
+    `$site = Get-PnPSite -ErrorAction SilentlyContinue
+    `$web = Get-PnPWeb -ErrorAction SilentlyContinue
+    Write-Host ""
+    Write-Host "[OK] Ligado ao SharePoint." -ForegroundColor Green
+    if (`$web) { Write-Host "Site Title: `$(`$web.Title)" -ForegroundColor Green }
+    if (`$site) { Write-Host "Site URL: `$(`$site.Url)" -ForegroundColor Green }
+    Write-Host ""
+    Write-Host "Podes minimizar esta janela. A IT Admin Toolkit vai reusar esta sessao via MSAL cache." -ForegroundColor Cyan
 } catch {
-    Write-Host "`n[ERR] Connect-PnPOnline falhou: `$(`$_.Exception.Message)" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "[ERR] Connect-PnPOnline falhou: `$(`$_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Se o popup nao apareceu, experimenta: Connect-PnPOnline -Url '$siteUrlEsc' -DeviceLogin" -ForegroundColor Yellow
     pause
 }
 "@
@@ -958,11 +978,25 @@ function Invoke-ToolRequest {
 
         'SharePointSite' {
             $siteUrl = [string]$Params.siteUrl
-            $adminUrl = [string]$Params.tenantAdminUrl
             $includeOwners = if ($null -ne $Params.includeOwners) { [bool]$Params.includeOwners } else { $true }
             if (-not $siteUrl) { throw 'Indique o URL do site.' }
-            $info = SP_Invoke-SiteAudit -SiteUrl $siteUrl -TenantAdminUrl $adminUrl -IncludeOwners $includeOwners
-            return @{ lines = (SP_Format-Report $info) }
+
+            # Requer que o utilizador tenha clicado "Ligar" no topo para
+            # o MSAL cache ter token valido. Spawn hidden pwsh.exe que reusa.
+            $sess = Test-M365Session -Service 'spo'
+            if (-not $sess.connected) {
+                return @{ lines = @(
+                    '[ERR] Nao clicaste em "Ligar a SharePoint Online" ainda.',
+                    '      Clica no botao Ligar no topo, autentica-te na janela pwsh.exe que abrir,',
+                    '      e volta aqui. Depois corre este tool.'
+                )}
+            }
+
+            $scriptPath = Join-Path $ToolsDir 'scripts\audit-spo-site.ps1'
+            $p = @{ siteUrl = $siteUrl }
+            if ($includeOwners) { $p['includeOwners'] = $true }
+            $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters $p -TimeoutSeconds 300 -PreferPwsh
+            return @{ lines = $lines }
         }
 
         default { throw "Ferramenta desconhecida: $ToolId" }
