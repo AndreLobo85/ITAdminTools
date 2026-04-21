@@ -860,10 +860,25 @@ $wv.add_CoreWebView2InitializationCompleted({
     }
 
     # Handler de mensagens do JS
+    # NOTA: $args e $sender sao variaveis automaticas do PowerShell, e quando
+    # usadas como parametros de um scriptblock invocado via event delegate
+    # podem colidir com a variavel automatica (array de args posicionais),
+    # fazendo com que $args.TryGetWebMessageAsString() lance silenciosamente.
+    # Renomeei para $src / $evArgs para evitar qualquer ambiguidade.
     $sender.CoreWebView2.add_WebMessageReceived({
-        param($s, $args)
-        $raw = $args.TryGetWebMessageAsString()
-        if (-not $raw) { return }
+        param($src, $evArgs)
+        # LOG MUITO CEDO — garante que sabemos que o handler disparou
+        try { Write-AppLog "WebMsg handler: FIRED" } catch {}
+        try {
+            $raw = $evArgs.TryGetWebMessageAsString()
+        } catch {
+            Write-AppLog "WebMsg: TryGetWebMessageAsString THREW: $($_.Exception.Message)"
+            return
+        }
+        if (-not $raw) {
+            Write-AppLog "WebMsg: raw vazio (message nao era string?)"
+            return
+        }
         Write-AppLog "WebMsg recv: $raw"
         $msg = $null
         try { $msg = $raw | ConvertFrom-Json } catch {
@@ -916,14 +931,14 @@ $wv.add_CoreWebView2InitializationCompleted({
             $json = $reply | ConvertTo-Json -Depth 10 -Compress
             $shortPreview = if ($json.Length -gt 300) { $json.Substring(0, 300) + '...' } else { $json }
             Write-AppLog "REPLY ($($json.Length) chars) id=$($msg.id): $shortPreview"
-            $s.PostWebMessageAsJson($json)
+            $src.PostWebMessageAsJson($json)
             Write-AppLog "REPLY posted OK (id=$($msg.id))"
         } catch {
             Write-AppLog "REPLY FALHOU (id=$($msg.id)): $($_.Exception.Message)"
             # Tentar enviar erro simples sem serializar $reply inteiro
             try {
                 $fallbackJson = "{""id"":$($msg.id),""ok"":false,""error"":""PostWebMessageAsJson falhou: $($_.Exception.Message -replace '\"','\\\"')""}"
-                $s.PostWebMessageAsJson($fallbackJson)
+                $src.PostWebMessageAsJson($fallbackJson)
                 Write-AppLog "REPLY fallback posted"
             } catch {
                 Write-AppLog "REPLY fallback TAMBEM falhou: $($_.Exception.Message)"

@@ -1,6 +1,6 @@
 {
-  "version": "1.0.12",
-  "releaseName": "IT Admin Toolkit - DEBUG MODE (DevTools + cache clear + verbose bridge)",
+  "version": "1.0.13",
+  "releaseName": "IT Admin Toolkit - FIX: WebMessageReceived handler ($args conflict)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,9 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "DEBUG MODE: DevTools (F12) abre automaticamente no arranque da aplicacao. Permite ver o console JS, erros, e todas as mensagens trocadas com o PowerShell em tempo real",
-    "Cache WebView2 e limpo automaticamente quando a versao muda. Evita que JS/HTML cacheados das versoes antigas estejam a correr em vez dos novos",
-    "bridge.js agora loga TUDO no console: cada postMessage enviado, cada mensagem recebida, timeouts, erros. Vamos conseguir ver exactamente onde a comunicacao para",
-    "Auto-ping no arranque: 1.5s depois de carregar, a app chama getContext() automaticamente. Se PS responder, o bridge funciona. Se nao responder, vemos no console"
+    "FIX DA CAUSA RAIZ: o scriptblock do WebMessageReceived usava 'param($s, $args)' mas $args e variavel automatica do PowerShell. Quando o event delegate era invocado, o binding do param $args colidia com a variavel automatica e o acesso a $args.TryGetWebMessageAsString() lancava excepcao silenciosamente - handler abortava antes de qualquer log. Por isso ZERO mensagens JS chegavam ao PS (confirmado pelo log do utilizador: muitos 'Navegacao iniciada' mas nenhum 'WebMsg recv')",
+    "Renomeado para 'param($src, $evArgs)' - nomes nao-automaticos. Handler agora e invocado correctamente",
+    "Adicionado log imediato 'WebMsg handler: FIRED' como primeira linha do handler - se alguma vez voltar a falhar, sabemos logo",
+    "Adicionado try/catch em torno de TryGetWebMessageAsString para nao perder excepcoes silenciosas"
   ]
 }
