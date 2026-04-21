@@ -1,6 +1,6 @@
 {
-  "version": "1.0.23",
-  "releaseName": "IT Admin Toolkit - sessao persistente EXO (Connect explicito + reutilizacao)",
+  "version": "1.0.24",
+  "releaseName": "IT Admin Toolkit - FIX: botao Ligar EXO nao fazia nada (ArgumentList .NET Core)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,11 +8,6 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "Novos modulos M365 tem barra de ligacao persistente no topo: botao Ligar faz Connect-ExchangeOnline UMA vez, depois os tools reusam a sessao. Stdin/stdout pipe para um pwsh.exe (PS 7) mantido vivo",
-    "MailboxStats agora: clicas Ligar (popup Microsoft uma vez), depois cada consulta de mailbox e quase instantanea - sem novo Connect, sem overhead de Import-Module",
-    "Run desactivado quando nao ha sessao activa no servico. Banner amarelo a indicar",
-    "REPLs sao terminados automaticamente quando a app fecha (FormClosing handler)",
-    "Status da sessao actualizado automaticamente a cada 15s (detecta quedas de conexao)",
-    "SharePoint Online: base preparada, REPL spo-repl.ps1 ainda por criar (SharePointSite a funcionar como antes na proxima release)"
+    "FIX: botao Ligar ao Exchange Online lancava NullReferenceException silenciosamente. O meu codigo usava $psi.ArgumentList.Add(...) mas essa propriedade da ProcessStartInfo so existe em .NET Core / 5+; a app corre em PS 5.1 (.NET Framework 4.x) que tem apenas $psi.Arguments como string. Corrigido: construir a string com escape correcto de aspas e espacos"
   ]
 }

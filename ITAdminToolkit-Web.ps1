@@ -616,9 +616,19 @@ function Start-M365Repl {
         if ($v) { $argList += "-$k"; $argList += $v }
     }
 
+    # ArgumentList (Collection) so existe em .NET Core / .NET 5+. A app
+    # corre em PS 5.1 (.NET Framework 4.x), onde ProcessStartInfo so tem
+    # a propriedade Arguments (string). Quotar args com espacos.
+    $argStr = ($argList | ForEach-Object {
+        if ($_ -match '\s|"') {
+            # escapar aspas + quotar
+            '"' + ($_ -replace '"', '\"') + '"'
+        } else { $_ }
+    }) -join ' '
+
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = $pwsh
-    foreach ($a in $argList) { $null = $psi.ArgumentList.Add($a) }
+    $psi.FileName  = $pwsh
+    $psi.Arguments = $argStr
     $psi.UseShellExecute        = $false
     $psi.RedirectStandardInput  = $true
     $psi.RedirectStandardOutput = $true
