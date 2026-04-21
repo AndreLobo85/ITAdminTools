@@ -142,15 +142,33 @@ function Invoke-ScriptInRunspace {
     $ps.Runspace = $rs
 
     if ($PSCmdlet.ParameterSetName -eq 'File') {
-        # Chama o ficheiro .ps1 com parametros named
-        [void]$ps.AddCommand($ScriptPath)
+        # Wrapper scriptblock: invoca o ficheiro via `& $Path @BoundParams`.
+        # Isto comporta-se igual a correr o script na consola PS, e o
+        # splatting garante que os parametros fazem bind ao param() block
+        # do script. (AddCommand com path absoluto nem sempre resolve o .ps1
+        # como ExternalScript e pode falhar silenciosamente no parameter
+        # binding.)
+        $wrapper = @'
+param($__Path, $__BoundParams)
+if (-not (Test-Path -LiteralPath $__Path)) {
+    throw "Script nao encontrado no runspace: $__Path"
+}
+if ($__BoundParams -is [hashtable] -and $__BoundParams.Count -gt 0) {
+    & $__Path @__BoundParams
+} else {
+    & $__Path
+}
+'@
+        [void]$ps.AddScript($wrapper)
+        [void]$ps.AddParameter('__Path', $ScriptPath)
+        [void]$ps.AddParameter('__BoundParams', $Parameters)
     } else {
         # Executa um scriptblock literal (texto). Re-cria o scriptblock dentro
         # do runspace para evitar capturar variaveis do scope-pai.
         [void]$ps.AddScript($ScriptBlock.ToString())
-    }
-    foreach ($k in $Parameters.Keys) {
-        [void]$ps.AddParameter($k, $Parameters[$k])
+        foreach ($k in $Parameters.Keys) {
+            [void]$ps.AddParameter($k, $Parameters[$k])
+        }
     }
 
     $script:RunningPS = $ps
@@ -243,7 +261,31 @@ function Invoke-ScriptInRunspace {
         Push-StreamLine '[WARN] Execucao cancelada pelo utilizador (Stop).'
     }
 
-    Write-AppLog "Runspace done: state=$state  lines=$($lines.Count)  errors=$($ps.Streams.Error.Count)"
+    # Fallback diagnostico: se o script terminou normalmente mas nao produziu
+    # NADA, o utilizador fica a olhar para um terminal vazio sem saber porque.
+    # Isto normalmente significa que o script nao encontrou dados (ex: user
+    # inexistente no AD) e retornou silenciosamente. Dar-lhe uma pista util.
+    if (-not $cancelled -and -not $threwTerminating -and
+        ($ps.Streams.Error.Count -eq 0) -and ($output.Count -eq 0)) {
+        $diag = @()
+        $diag += '[WARN] O script terminou sem produzir output e sem erros.'
+        if ($PSCmdlet.ParameterSetName -eq 'File') {
+            $diag += "       Script: $ScriptPath"
+            if ($Parameters -and $Parameters.Count -gt 0) {
+                $pStr = ($Parameters.GetEnumerator() | ForEach-Object { "-$($_.Key) '$($_.Value)'" }) -join ' '
+                $diag += "       Parametros passados ao script: $pStr"
+            } else {
+                $diag += '       (nenhum parametro passado)'
+            }
+            $diag += '       Causas provaveis:'
+            $diag += '       - O valor pesquisado nao existe no AD (ex: samaccountname errado)'
+            $diag += '       - O script fez return cedo porque os parametros nao fizeram bind'
+            $diag += '       - Sem ligacao ao dominio (tenta "nltest /dsgetdc:" numa consola PS)'
+        }
+        foreach ($d in $diag) { $lines += $d; Push-StreamLine $d }
+    }
+
+    Write-AppLog "Runspace done: state=$state  lines=$($lines.Count)  errors=$($ps.Streams.Error.Count)  outputCount=$($output.Count)"
 
     try { $ps.Dispose() } catch {}
     try { $rs.Close(); $rs.Dispose() } catch {}
