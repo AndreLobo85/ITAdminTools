@@ -24,6 +24,17 @@
     if (!msg || msg.id == null) return;
     const p = pending.get(msg.id);
     if (!p) return;
+
+    // Streaming: TOOL_LINE chega varias vezes durante a execucao,
+    // antes da resposta final. Nao remove o pending.
+    if (msg.type === 'TOOL_LINE') {
+      if (typeof p.onLine === 'function') {
+        try { p.onLine(msg.line); } catch (e) { console.error('onLine handler:', e); }
+      }
+      return;
+    }
+
+    // Resposta final
     pending.delete(msg.id);
     if (msg.ok) p.resolve(msg.result);
     else p.reject(new Error(msg.error || 'erro desconhecido'));
@@ -31,6 +42,7 @@
 
   function send(type, payload, opts = {}) {
     const timeoutMs = opts.timeoutMs ?? 180000; // 3 min default
+    const onLine    = opts.onLine ?? null;
     return new Promise((resolve, reject) => {
       const id = ++seq;
       const timer = timeoutMs > 0 ? setTimeout(() => {
@@ -40,6 +52,7 @@
         }
       }, timeoutMs) : null;
       pending.set(id, {
+        onLine,
         resolve: (v) => { if (timer) clearTimeout(timer); resolve(v); },
         reject:  (e) => { if (timer) clearTimeout(timer); reject(e); }
       });
@@ -50,8 +63,9 @@
   window.bridge = {
     available: true,
     // Sem timeout do lado JS: o utilizador pode parar via cancelTool().
-    // O host PowerShell ja pode ser cancelado manualmente atraves do botao Stop.
-    runTool: (toolId, params) => send('RUN_TOOL', { toolId, params }, { timeoutMs: 0 }),
+    // onLine: callback opcional, recebe cada linha streamed do PowerShell.
+    runTool: (toolId, params, onLine) =>
+      send('RUN_TOOL', { toolId, params }, { timeoutMs: 0, onLine }),
     cancelTool: () => send('CANCEL_TOOL', {}, { timeoutMs: 5000 }),
     getContext: () => send('GET_CONTEXT', {}, { timeoutMs: 5000 })
   };

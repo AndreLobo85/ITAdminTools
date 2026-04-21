@@ -1,6 +1,6 @@
 {
-  "version": "1.0.4",
-  "releaseName": "IT Admin Toolkit - cancellable runspaces + EXO role validation",
+  "version": "1.0.5",
+  "releaseName": "IT Admin Toolkit - live streaming + output capture fix",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,11 +8,10 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "Scripts agora correm em runspace separado: UI nao bloqueia, e e possivel cancelar a meio (botao Stop substitui Run durante execucao, equivalente a Ctrl+C no PowerShell)",
-    "Erros do PowerShell sao agora apresentados com detalhe (mensagem, posicao no script, CategoryInfo, FullyQualifiedErrorId) tal como apareceriam na consola PS",
-    "MailboxStats: pre-validacao via Microsoft Graph - so faz Connect-ExchangeOnline se o utilizador tiver Exchange Administrator (ou Global Admin / Recipient Admin / Global Reader) ACTIVA em PIM",
-    "Connect-ExchangeOnline e Connect-MgGraph correm fora da UI thread - popups de autenticacao aparecem visiveis e a aplicacao mantem-se responsive",
-    "JS bridge: timeout removido em RUN_TOOL (utilizador controla a duracao via Stop)",
-    "Pre-requisitos novos: modulo Microsoft.Graph.Authentication (Install-Module Microsoft.Graph.Authentication -Scope CurrentUser)"
+    "FIX CRITICO: linhas geradas pelos scripts no runspace ja nao se perdiam silenciosamente (em v1.0.4 a captura via PSDataCollection so era usada no caminho de erro)",
+    "Streaming live: cada linha do script aparece no terminal da app no momento em que e produzida, em vez de tudo de uma vez no fim. Isto permite ver onde o script esta a stallar (ex: que DC esta lento)",
+    "Runspace passa de STA para MTA - melhor compatibilidade com ADSI/AD lookups",
+    "Erros do PowerShell tambem sao streamed em tempo real",
+    "Bridge JS: novo callback onLine (tambem expor a script.runTool(toolId, params, onLine))"
   ]
 }

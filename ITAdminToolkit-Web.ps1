@@ -98,6 +98,19 @@ function Stop-RunningScript {
     }
 }
 
+function Push-StreamLine {
+    param([string]$Line)
+    if (-not $script:CurrentReqId) { return }
+    if (-not $script:WebViewCtrl -or -not $script:WebViewCtrl.CoreWebView2) { return }
+    try {
+        $payload = @{ id = $script:CurrentReqId; type = 'TOOL_LINE'; line = $Line }
+        $json = $payload | ConvertTo-Json -Compress
+        $script:WebViewCtrl.CoreWebView2.PostWebMessageAsJson($json)
+    } catch {
+        Write-AppLog "Push-StreamLine falhou: $($_.Exception.Message)"
+    }
+}
+
 function Invoke-ScriptInRunspace {
     [CmdletBinding(DefaultParameterSetName='File')]
     param(
@@ -118,8 +131,10 @@ function Invoke-ScriptInRunspace {
         $script:RunningRS = $null
     }
 
+    # MTA por defeito (AD/ADSI funciona melhor em MTA; STA so e necessario
+    # para popups WPF/WinForms criados dentro do runspace e o EXO ja gere isso).
     $rs = [runspacefactory]::CreateRunspace()
-    $rs.ApartmentState = 'STA'
+    $rs.ApartmentState = 'MTA'
     $rs.ThreadOptions  = 'ReuseThread'
     $rs.Open()
 
@@ -147,31 +162,51 @@ function Invoke-ScriptInRunspace {
     $output = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
     $async  = $ps.BeginInvoke($null, $output)
 
-    # Loop nao-bloqueante: pumpa UI ate completar (permite que CANCEL_TOOL chegue)
+    # Loop nao-bloqueante: pumpa UI ate completar e faz streaming live
+    # de cada nova linha de output para a UI (TOOL_LINE).
+    $lastIdx = 0
+    $errLastIdx = 0
     while (-not $async.IsCompleted) {
         [System.Windows.Forms.Application]::DoEvents()
-        Start-Sleep -Milliseconds 40
+        # Stream output novo
+        while ($lastIdx -lt $output.Count) {
+            Push-StreamLine ("$($output[$lastIdx])")
+            $lastIdx++
+        }
+        # Stream erros novos
+        while ($errLastIdx -lt $ps.Streams.Error.Count) {
+            foreach ($eline in (Format-PSErrorRecord $ps.Streams.Error[$errLastIdx])) {
+                Push-StreamLine $eline
+            }
+            $errLastIdx++
+        }
+        Start-Sleep -Milliseconds 60
+    }
+
+    # Flush remanescente
+    while ($lastIdx -lt $output.Count) {
+        Push-StreamLine ("$($output[$lastIdx])")
+        $lastIdx++
+    }
+    while ($errLastIdx -lt $ps.Streams.Error.Count) {
+        foreach ($eline in (Format-PSErrorRecord $ps.Streams.Error[$errLastIdx])) {
+            Push-StreamLine $eline
+        }
+        $errLastIdx++
     }
 
     $lines = @()
+    foreach ($o in $output) { $lines += "$o" }
+
     $threwTerminating = $null
     try {
-        $finalOutput = $ps.EndInvoke($async)
-        if ($finalOutput) {
-            foreach ($o in $finalOutput) { $lines += "$o" }
-        } elseif ($output) {
-            foreach ($o in $output) { $lines += "$o" }
-        }
+        [void]$ps.EndInvoke($async)
     } catch {
         $threwTerminating = $_
         Write-AppLog "EndInvoke threw: $($_.Exception.Message)"
-        # EndInvoke lanca quando o runspace lanca terminating error ou foi parado
-        if ($output) {
-            foreach ($o in $output) { $lines += "$o" }
-        }
     }
 
-    # Erros nao-terminantes que o script tenha emitido
+    # Erros nao-terminantes (ja foram streamed mas vao tambem no resultado final)
     if ($ps.Streams.Error -and $ps.Streams.Error.Count -gt 0) {
         $lines += ''
         foreach ($err in $ps.Streams.Error) {
@@ -179,24 +214,33 @@ function Invoke-ScriptInRunspace {
         }
     }
     if ($ps.Streams.Warning) {
-        foreach ($w in $ps.Streams.Warning) { $lines += "[WARN] $w" }
+        foreach ($w in $ps.Streams.Warning) {
+            $line = "[WARN] $w"
+            $lines += $line
+            Push-StreamLine $line
+        }
     }
     if ($ps.Streams.Information) {
-        foreach ($i in $ps.Streams.Information) { $lines += "$i" }
+        foreach ($i in $ps.Streams.Information) {
+            $line = "$i"
+            $lines += $line
+            Push-StreamLine $line
+        }
     }
 
     $state = $ps.InvocationStateInfo.State
     $cancelled = ($state -eq 'Stopped' -or $state -eq 'Stopping')
 
-    # Terminating exception (com stack) — adiciona apos os erros stream
     if ($threwTerminating -and -not $cancelled) {
         $lines += ''
-        $lines += (Format-PSErrorRecord $threwTerminating)
+        $errLines = Format-PSErrorRecord $threwTerminating
+        foreach ($el in $errLines) { $lines += $el; Push-StreamLine $el }
     }
 
     if ($cancelled) {
         $lines += ''
         $lines += '[WARN] Execucao cancelada pelo utilizador (Stop).'
+        Push-StreamLine '[WARN] Execucao cancelada pelo utilizador (Stop).'
     }
 
     Write-AppLog "Runspace done: state=$state  lines=$($lines.Count)  errors=$($ps.Streams.Error.Count)"
@@ -506,7 +550,13 @@ $wv.add_CoreWebView2InitializationCompleted({
                             $params[$prop.Name] = $prop.Value
                         }
                     }
-                    $result = Invoke-ToolRequest -ToolId $msg.toolId -Params $params
+                    # ID disponivel para Push-StreamLine durante a execucao
+                    $script:CurrentReqId = $msg.id
+                    try {
+                        $result = Invoke-ToolRequest -ToolId $msg.toolId -Params $params
+                    } finally {
+                        $script:CurrentReqId = $null
+                    }
                     $reply = @{ id = $msg.id; ok = $true; result = $result }
                 }
                 'GET_CONTEXT' {

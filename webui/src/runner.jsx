@@ -1,7 +1,7 @@
 // Runner — runs a script, shows terminal output
 const { useState, useEffect, useRef } = React;
 
-const TerminalView = ({ lines, running, onClear, script, lang, params }) => {
+const TerminalView = ({ lines, running, streaming, onClear, script, lang, params }) => {
   const s = window.STRINGS[lang];
   const bodyRef = useRef(null);
   const [copied, setCopied] = useState(false);
@@ -9,7 +9,20 @@ const TerminalView = ({ lines, running, onClear, script, lang, params }) => {
   const [runStart, setRunStart] = useState(null);
   const [elapsed, setElapsed] = useState(0);
 
+  // Streaming mode (host real PowerShell): renderiza directo sem typewriter
+  // para que o user veja as linhas a aparecer enquanto o script corre.
+  // Modo simulacao (browser sem host): mantem o efeito typewriter.
   useEffect(() => {
+    if (streaming) {
+      setVisibleLines(lines || []);
+      if (lines && lines.length > 0 && runStart === null) {
+        setRunStart(Date.now());
+      }
+      if (!running && (!lines || lines.length === 0)) {
+        setRunStart(null);
+      }
+      return;
+    }
     if (!lines || lines.length === 0) { setVisibleLines([]); return; }
     setVisibleLines([]);
     setRunStart(Date.now());
@@ -20,11 +33,12 @@ const TerminalView = ({ lines, running, onClear, script, lang, params }) => {
       if (i >= lines.length) clearInterval(interval);
     }, 180);
     return () => clearInterval(interval);
-  }, [lines]);
+  }, [lines, streaming]);
 
   useEffect(() => {
     if (!running) return;
-    const t = setInterval(() => setElapsed((Date.now() - runStart) / 1000), 80);
+    const start = runStart || Date.now();
+    const t = setInterval(() => setElapsed((Date.now() - start) / 1000), 80);
     return () => clearInterval(t);
   }, [running, runStart]);
 
@@ -162,18 +176,28 @@ const Runner = ({ script, area, lang, onBack }) => {
     try {
       let out;
       if (window.bridge && window.bridge.available) {
-        // Execucao real via host PowerShell (WebView2 bridge)
-        const result = await window.bridge.runTool(script.id, formValues);
-        out = (result && result.lines) ? result.lines : (Array.isArray(result) ? result : [String(result)]);
+        // Execucao real via host PowerShell (WebView2 bridge).
+        // Streaming live: cada TOOL_LINE actualiza outputLines em tempo real.
+        const result = await window.bridge.runTool(script.id, formValues, (line) => {
+          setOutputLines(prev => [...prev, line]);
+        });
+        // Se o resultado final tiver mais linhas que o stream (raro), substitui;
+        // se for igual/curto, mantem o stream. Comparar por length basta.
+        const finalLines = (result && result.lines)
+          ? result.lines
+          : (Array.isArray(result) ? result : [String(result)]);
+        setOutputLines(prev => (finalLines.length >= prev.length ? finalLines : prev));
+        setRunning(false);
+        setStopping(false);
       } else {
         // Fallback: simulacao embutida
         await new Promise(r => setTimeout(r, 400));
         out = script.output(formValues);
+        setOutputLines(out);
+        setTimeout(() => { setRunning(false); setStopping(false); }, out.length * 180 + 200);
       }
-      setOutputLines(out);
-      setTimeout(() => { setRunning(false); setStopping(false); }, out.length * 180 + 200);
     } catch (err) {
-      setOutputLines(['[ERR] ' + (err && err.message ? err.message : err)]);
+      setOutputLines(prev => [...prev, '[ERR] ' + (err && err.message ? err.message : err)]);
       setRunning(false);
       setStopping(false);
     }
@@ -340,6 +364,7 @@ const Runner = ({ script, area, lang, onBack }) => {
             <h3>{s.output}</h3>
           </div>
           <TerminalView lines={outputLines} running={running}
+                        streaming={!!(window.bridge && window.bridge.available)}
                         onClear={() => setOutputLines([])}
                         script={script} lang={lang} params={formValues}/>
         </div>
