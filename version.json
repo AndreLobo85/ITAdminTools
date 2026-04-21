@@ -1,6 +1,6 @@
 {
-  "version": "1.0.13",
-  "releaseName": "IT Admin Toolkit - FIX: WebMessageReceived handler ($args conflict)",
+  "version": "1.0.14",
+  "releaseName": "IT Admin Toolkit - bridge version marker (upgrade verification)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,9 +8,7 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX DA CAUSA RAIZ: o scriptblock do WebMessageReceived usava 'param($s, $args)' mas $args e variavel automatica do PowerShell. Quando o event delegate era invocado, o binding do param $args colidia com a variavel automatica e o acesso a $args.TryGetWebMessageAsString() lancava excepcao silenciosamente - handler abortava antes de qualquer log. Por isso ZERO mensagens JS chegavam ao PS (confirmado pelo log do utilizador: muitos 'Navegacao iniciada' mas nenhum 'WebMsg recv')",
-    "Renomeado para 'param($src, $evArgs)' - nomes nao-automaticos. Handler agora e invocado correctamente",
-    "Adicionado log imediato 'WebMsg handler: FIRED' como primeira linha do handler - se alguma vez voltar a falhar, sabemos logo",
-    "Adicionado try/catch em torno de TryGetWebMessageAsString para nao perder excepcoes silenciosas"
+    "Inclui o fix da v1.0.13 (WebMessageReceived handler - $args conflict)",
+    "bridge.js agora imprime 'loading v1.0.14' no console - utilizador sabe visualmente que tem a versao nova (em v1.0.13 esqueci de actualizar esta string)"
   ]
 }
