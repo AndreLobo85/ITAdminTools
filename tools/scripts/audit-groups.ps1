@@ -25,6 +25,8 @@
 
 param(
     [string]$groupName = "",
+    [ValidateSet('Suffix','Wildcard','Exact')]
+    [string]$mode = 'Suffix',
     [switch]$expand,
     [switch]$activeOnly,
     [switch]$export,
@@ -47,25 +49,30 @@ if (-not $groupName) {
 
 $ACCOUNTDISABLE = 0x000002
 
-# -------- Parsing do input -------
+# -------- Parsing do input (baseado em $mode explicito) --------
 $filterPieces = @()
 $inputTrimmed = $groupName.Trim()
-$hasComma = $inputTrimmed -match ','
-$hasWildcard = $inputTrimmed -match '\*|\?'
+$parts = $inputTrimmed -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
 
-if ($hasComma -and -not $hasWildcard) {
-    # Lista de sufixos: NR,NF -> *NR, *NF
-    $parts = $inputTrimmed -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-    foreach ($p in $parts) { $filterPieces += "(name=*$p)" }
-    "[INFO] Modo sufixo: $($parts.Count) sufixo(s) -> $($parts -join ', ')"
-} elseif ($hasComma) {
-    # Lista de padroes mistos
-    $parts = $inputTrimmed -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-    foreach ($p in $parts) { $filterPieces += "(name=$p)" }
-    "[INFO] Modo padroes multiplos: $($parts.Count) padroes"
-} else {
-    # Nome unico (exacto ou com wildcard)
-    $filterPieces += "(name=$inputTrimmed)"
+switch ($mode) {
+    'Suffix' {
+        # Cada termo fica *TERMO (ex: NR -> *NR, NR,NF -> *NR, *NF)
+        foreach ($p in $parts) { $filterPieces += "(name=*$p)" }
+        "[INFO] Modo SUFFIX: $($parts.Count) sufixo(s) -> $(($parts | ForEach-Object { "*$_" }) -join ', ')"
+    }
+    'Wildcard' {
+        # Usa o valor como esta (user decide onde por o *)
+        foreach ($p in $parts) { $filterPieces += "(name=$p)" }
+        "[INFO] Modo WILDCARD: $($parts.Count) padrao(oes) -> $($parts -join ', ')"
+    }
+    'Exact' {
+        # Match literal - escapar wildcards para LDAP nao os interpretar
+        foreach ($p in $parts) {
+            $escaped = $p -replace '\*','\2a' -replace '\?','\3f'
+            $filterPieces += "(name=$escaped)"
+        }
+        "[INFO] Modo EXACT: $($parts.Count) nome(s) -> $($parts -join ', ')"
+    }
 }
 
 $nameFilter = if ($filterPieces.Count -eq 1) { $filterPieces[0] } else { '(|' + ($filterPieces -join '') + ')' }

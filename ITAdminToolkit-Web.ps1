@@ -573,9 +573,13 @@ function Invoke-ToolRequest {
 
         'GroupInfo' {
             $g = [string]$Params.groupName
-            if (-not $g) { throw 'Indique o nome / padrao / sufixos.' }
+            if (-not $g) { throw 'Indique o nome / padrao / sufixo(s).' }
             $scriptPath = Join-Path $ToolsDir 'scripts\audit-groups.ps1'
             $p = @{ groupName = $g }
+            # Modo de pesquisa (Suffix default)
+            $mode = if ($Params.mode) { [string]$Params.mode } else { 'Suffix' }
+            if ($mode -notin @('Suffix','Wildcard','Exact')) { $mode = 'Suffix' }
+            $p['mode'] = $mode
             if ($Params.expand)     { $p['expand']     = [bool]$Params.expand }
             if ($Params.activeOnly) { $p['activeOnly'] = [bool]$Params.activeOnly }
             if ($Params.export)     { $p['export']     = [bool]$Params.export }

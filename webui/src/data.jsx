@@ -86,7 +86,12 @@ const ONPREM_MODULES = [
       en: 'AD group search and audit via ADSI (no RSAT). Exact name, wildcard pattern or suffix list. Recursively expands nested groups and exports to Excel.',
     },
     params: [
-      { id: 'groupName', label: { pt: 'Nome / padrão / sufixos', en: 'Name / pattern / suffixes' }, placeholder: 'GPAMNR  |  GNORMA*  |  *-ADMINS  |  NR,NF', required: true },
+      { id: 'mode', label: { pt: 'Modo de pesquisa', en: 'Search mode' }, type: 'select', default: 'Suffix', options: [
+        { v: 'Suffix',   l: { pt: 'Por sufixo (ex: NR → *NR, ou NR,NF)', en: 'By suffix (NR → *NR)' } },
+        { v: 'Wildcard', l: { pt: 'Por padrão com wildcards (ex: GNORMA*, *-ADMINS)', en: 'By wildcard pattern' } },
+        { v: 'Exact',    l: { pt: 'Nome exacto (match literal)', en: 'Exact name (literal match)' } },
+      ]},
+      { id: 'groupName', label: { pt: 'Nome / padrão / sufixo(s)', en: 'Name / pattern / suffix(es)' }, placeholder: 'NR,NF  |  GNORMA*  |  GPAMNR', required: true },
       { id: 'expand', label: { pt: 'Expandir grupos aninhados (recursivo)', en: 'Expand nested groups recursively' }, type: 'check', default: false },
       { id: 'activeOnly', label: { pt: 'Apenas users activos (Enabled=True)', en: 'Active users only (Enabled=True)' }, type: 'check', default: false },
       { id: 'export', label: { pt: 'Exportar Excel no fim (abre automaticamente)', en: 'Export Excel at the end (auto-opens)' }, type: 'check', default: false },

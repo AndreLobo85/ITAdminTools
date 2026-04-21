@@ -1,6 +1,6 @@
 {
-  "version": "1.0.18",
-  "releaseName": "IT Admin Toolkit - Grupos AD com suffix, expand recursivo e export Excel",
+  "version": "1.0.19",
+  "releaseName": "IT Admin Toolkit - Modo de pesquisa explicito (Suffix / Wildcard / Exact)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,12 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "Modulo Grupos AD agora suporta lista de sufixos como input (ex: NR,NF -> encontra todos os grupos terminados em NR ou NF). Alem do nome exacto e wildcards ja existentes",
-    "Nova opcao 'Expandir grupos aninhados (recursivo)': descobre todos os users finais mesmo atraves de varios niveis de aninhamento, com deteccao de ciclos",
-    "Nova opcao 'Apenas users activos' (funciona em conjunto com expand)",
-    "Nova opcao 'Exportar Excel no fim': cria ficheiro .xlsx em Documentos com Resumo + Detalhe e abre automaticamente no fim. Fallback a CSV se Excel nao disponivel",
-    "Novo script tools/scripts/audit-groups.ps1 substitui o antigo get-diag-info-group.ps1. Tudo em ADSI - nao depende de RSAT/Get-ADGroup",
-    "Invoke-ScriptExternal agora trata switches bool correctamente (passa -flag sem valor quando true, skip quando false)",
-    "DevTools deixa de abrir automaticamente (bridge estavel desde v1.0.16). Para debugging abrir com F12 na app"
+    "Modulo Grupos AD tem agora um select 'Modo de pesquisa' com 3 opcoes explicitas: Por sufixo (default), Por padrao com wildcards, Nome exacto",
+    "Elimina a ambiguidade: escrever 'NR' sem virgula agora funciona como 'procurar por grupos terminados em NR' (era necessario antes escrever 'NR,' ou algo com virgula)",
+    "Modo Exact escapa wildcards para nao serem interpretados pelo LDAP",
+    "Todos os modos aceitam lista separada por virgulas"
   ]
 }
