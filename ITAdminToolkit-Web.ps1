@@ -57,6 +57,18 @@ Add-Type -Path $coreDll
 Add-Type -Path $wfDll
 Write-AppLog "WebView2 DLLs carregadas"
 
+# Log da versao Core WebView2 carregada (SDK 1.0.2365.x tem bug conhecido
+# em WebMessageReceived - WebView2Feedback #4441)
+try {
+    $coreDllVer = (Get-Item $coreDll).VersionInfo.FileVersion
+    $wfDllVer   = (Get-Item $wfDll).VersionInfo.FileVersion
+    Write-AppLog "WebView2.Core.dll version: $coreDllVer"
+    Write-AppLog "WebView2.WinForms.dll version: $wfDllVer"
+    if ($coreDllVer -like '1.0.2365.*') {
+        Write-AppLog "AVISO: SDK 1.0.2365.x tem bug conhecido em WebMessageReceived!"
+    }
+} catch { Write-AppLog "Nao consegui ler versao WebView2 DLL: $($_.Exception.Message)" }
+
 # ========== Carregar ferramentas ==========
 foreach ($f in '_common.ps1','UserInfo.ps1','GroupInfo.ps1','ADGroupAuditor.ps1','ShareAuditor.ps1','MailboxStats.ps1','SharePointSite.ps1') {
     Write-AppLog "Carregar $f"
@@ -894,14 +906,25 @@ $wv.add_CoreWebView2InitializationCompleted({
                 param($src, $evArgs)
                 # LOG MUITO CEDO — garante que sabemos que o handler disparou
                 try { Write-AppLog "WebMsg handler: FIRED" } catch {}
-        try {
-            $raw = $evArgs.TryGetWebMessageAsString()
-        } catch {
-            Write-AppLog "WebMsg: TryGetWebMessageAsString THREW: $($_.Exception.Message)"
-            return
+        # WebView2 entrega postMessage(string) via TryGetWebMessageAsString()
+        # e postMessage(object) via WebMessageAsJson. Tentamos ambos para
+        # nao depender de como o JS enviou.
+        $raw = $null
+        try { $raw = $evArgs.TryGetWebMessageAsString() } catch {}
+        if ([string]::IsNullOrEmpty($raw)) {
+            try {
+                $rawJson = $evArgs.WebMessageAsJson
+                if (-not [string]::IsNullOrEmpty($rawJson)) {
+                    Write-AppLog "WebMsg: fallback para WebMessageAsJson"
+                    # WebMessageAsJson devolve a propria JSON string
+                    $raw = $rawJson
+                }
+            } catch {
+                Write-AppLog "WebMsg: WebMessageAsJson THREW: $($_.Exception.Message)"
+            }
         }
-        if (-not $raw) {
-            Write-AppLog "WebMsg: raw vazio (message nao era string?)"
+        if ([string]::IsNullOrEmpty($raw)) {
+            Write-AppLog "WebMsg: nem string nem JSON - a ignorar"
             return
         }
         Write-AppLog "WebMsg recv: $raw"

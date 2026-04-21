@@ -7,7 +7,7 @@
 // funcionar normalmente).
 // ============================================================
 (function () {
-  const BRIDGE_VERSION = 'v1.0.15';
+  const BRIDGE_VERSION = 'v1.0.16';
   console.info('[bridge] loading ' + BRIDGE_VERSION);
 
   const hasHost = !!(window.chrome && window.chrome.webview);
@@ -73,8 +73,15 @@
         reject:  (e) => { if (timer) clearTimeout(timer); reject(e); }
       });
       try {
-        window.chrome.webview.postMessage({ id, type, ...payload });
-        console.info('[bridge] postMessage OK id=' + id);
+        // IMPORTANTE: enviar como STRING (JSON.stringify), nao object.
+        // WebView2 entrega objects via WebMessageAsJson (propriedade) e
+        // strings via TryGetWebMessageAsString (metodo). O nosso handler
+        // PS usa TryGetWebMessageAsString, portanto a mensagem tem de ser
+        // string. Enviar object retornava null no PS e o handler saia
+        // silenciosamente sem log.
+        const payloadStr = JSON.stringify({ id, type, ...payload });
+        window.chrome.webview.postMessage(payloadStr);
+        console.info('[bridge] postMessage OK id=' + id + ' (' + payloadStr.length + ' chars)');
       } catch (e) {
         console.error('[bridge] postMessage THREW for id=' + id, e);
         pending.delete(id);
