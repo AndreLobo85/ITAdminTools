@@ -1,6 +1,6 @@
 {
-  "version": "1.0.25",
-  "releaseName": "IT Admin Toolkit - FIX: popup Connect nao abria (precisa de -STA)",
+  "version": "1.0.26",
+  "releaseName": "IT Admin Toolkit - Ligar EXO abre janela pwsh visivel (comportamento manual)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,7 +8,8 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX: pwsh.exe do REPL EXO e agora lancado com -STA. Por default pwsh 7 corre em MTA (multi-thread), onde popups WinForms/MSAL falham silenciosamente. STA e obrigatorio para o popup do Connect-ExchangeOnline aparecer",
-    "Diagnostico extra no arranque do REPL: ApartmentState, UserInteractive, PID - se o popup ainda nao aparecer saberemos porque"
+    "FIX: o botao Ligar ao Exchange Online agora abre uma janela pwsh.exe VISIVEL com Connect-ExchangeOnline - exactamente o que acontece quando o utilizador corre o comando manualmente. O popup Microsoft aparece nessa janela, user autentica, sessao fica activa na janela (-NoExit)",
+    "REPL persistente abandonado: tinha demasiados modos de falhar silenciosamente (stdio pipes redireccionados, CreateNoWindow a esconder popups, etc). Abordagem simples: visible window + MSAL cache",
+    "MailboxStats agora re-utiliza audit-mailboxes.ps1: spawn hidden pwsh.exe que faz Connect-ExchangeOnline silenciosamente via cache MSAL (populada pelo user autenticar na janela do Ligar), depois Get-MailboxStatistics"
   ]
 }

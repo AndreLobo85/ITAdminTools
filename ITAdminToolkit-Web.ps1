@@ -603,72 +603,79 @@ function Start-M365Repl {
         return @{ ok = $false; lines = @('[ERR] pwsh.exe (PowerShell 7) nao encontrado neste PC. Instala PS 7 para usar M365.') }
     }
 
-    $scriptPath = Join-Path $ToolsDir "scripts\$Service-repl.ps1"
-    if (-not (Test-Path $scriptPath)) {
-        return @{ ok = $false; lines = @("[ERR] Script REPL nao encontrado: $scriptPath") }
+    # ABORDAGEM SIMPLES: abrir uma janela pwsh.exe VISIVEL que corre
+    # Connect-ExchangeOnline. User ve o popup Microsoft a aparecer dessa
+    # janela (como faria manualmente) e autentica. -NoExit mantem a janela
+    # aberta com a sessao activa. O utilizador pode fecha-la quando quiser.
+    #
+    # Os tools subsequentes da app spawn os proprios pwsh.exe hidden e fazem
+    # Connect-ExchangeOnline silenciosamente via cache MSAL que foi populada
+    # pela autenticacao acima. Sem REPL complicado, sem pipes, sem deadlocks.
+
+    if ($Service -eq 'exo') {
+        $cmd = @'
+Write-Host "`n=== IT Admin Toolkit - Connect Exchange Online ===" -ForegroundColor Cyan
+Write-Host "ApartmentState: $([System.Threading.Thread]::CurrentThread.GetApartmentState())"
+Import-Module ExchangeOnlineManagement -ErrorAction Stop
+Write-Host "A abrir popup de autenticacao Microsoft..." -ForegroundColor Yellow
+try {
+    Connect-ExchangeOnline -ShowBanner:$false -ErrorAction Stop
+    $conn = Get-ConnectionInformation -ErrorAction SilentlyContinue | Where-Object State -eq 'Connected' | Select-Object -First 1
+    if ($conn) {
+        Write-Host "`n[OK] Ligado como: $($conn.UserPrincipalName)" -ForegroundColor Green
+        Write-Host "Tenant: $($conn.TenantId)" -ForegroundColor Green
+        Write-Host "`nPodes minimizar esta janela. A IT Admin Toolkit vai reusar esta sessao." -ForegroundColor Cyan
+        Write-Host "Fecha esta janela com Disconnect-ExchangeOnline + Exit ou apenas X quando acabares." -ForegroundColor Cyan
+    }
+} catch {
+    Write-Host "`n[ERR] Connect falhou: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Se o popup nao apareceu, experimenta: Connect-ExchangeOnline -Device" -ForegroundColor Yellow
+    pause
+}
+'@
+    } elseif ($Service -eq 'spo') {
+        $siteUrl = if ($Extra.siteUrl) { $Extra.siteUrl } else { '' }
+        $cmd = @"
+Write-Host "`n=== IT Admin Toolkit - Connect SharePoint Online ===" -ForegroundColor Cyan
+Import-Module PnP.PowerShell -ErrorAction Stop
+try {
+    Connect-PnPOnline -Url '$siteUrl' -Interactive -ErrorAction Stop
+    Write-Host "`n[OK] Ligado ao SharePoint." -ForegroundColor Green
+} catch {
+    Write-Host "`n[ERR] Connect-PnPOnline falhou: `$(`$_.Exception.Message)" -ForegroundColor Red
+    pause
+}
+"@
     }
 
-    # Build args.
-    # IMPORTANTE: -STA forca Single-Threaded Apartment, necessario para
-    # popups WinForms/MSAL do Connect-ExchangeOnline abrirem. Sem -STA,
-    # pwsh.exe por default corre MTA e o popup falha silenciosamente.
-    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-File',$scriptPath)
-    if ($UseDeviceCode) { $argList += '-useDeviceCode' }
-    foreach ($k in $Extra.Keys) {
-        $v = [string]$Extra[$k]
-        if ($v) { $argList += "-$k"; $argList += $v }
-    }
-
-    # ArgumentList (Collection) so existe em .NET Core / .NET 5+. A app
-    # corre em PS 5.1 (.NET Framework 4.x), onde ProcessStartInfo so tem
-    # a propriedade Arguments (string). Quotar args com espacos.
+    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-NoExit','-Command',$cmd)
     $argStr = ($argList | ForEach-Object {
-        if ($_ -match '\s|"') {
-            # escapar aspas + quotar
+        if ($_ -match '\s|"|`|\$|\(') {
             '"' + ($_ -replace '"', '\"') + '"'
         } else { $_ }
     }) -join ' '
 
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName  = $pwsh
-    $psi.Arguments = $argStr
-    $psi.UseShellExecute        = $false
-    $psi.RedirectStandardInput  = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError  = $true
-    $psi.CreateNoWindow         = $true
-    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    Write-AppLog "Starting VISIBLE M365 window ($Service): $pwsh -STA -NoExit"
 
-    $proc = New-Object System.Diagnostics.Process
-    $proc.StartInfo = $psi
-    Write-AppLog "Starting M365 REPL ($Service): $pwsh $($argList -join ' ')"
     try {
-        [void]$proc.Start()
+        # Start-Process com -WindowStyle Normal = janela visivel. Sem redirects,
+        # sem CreateNoWindow. User ve a janela a abrir + popup.
+        $proc = Start-Process -FilePath $pwsh -ArgumentList $argList -WindowStyle Normal -PassThru -ErrorAction Stop
     } catch {
         return @{ ok = $false; lines = @("[ERR] Falha a lancar pwsh.exe: $($_.Exception.Message)") }
     }
 
-    # Read stdout until <<<READY ...>>> or <<<READY_ERROR ...>>>
-    # Timeout: 180s (user pode demorar a responder ao popup)
-    $startupLines = @()
-    $readyInfo = $null
-    $readyError = $null
-    $deadline = (Get-Date).AddSeconds(180)
-
-    while ((Get-Date) -lt $deadline -and -not $proc.HasExited) {
-        $line = $proc.StandardOutput.ReadLine()
-        if ($null -eq $line) { break }
-        Write-AppLog "EXO-REPL stdout: $line"
-        if ($line -match '^<<<READY upn=(.+?) tenant=(.+?)>>>$') {
-            $readyInfo = @{ upn = $Matches[1]; tenant = $Matches[2] }
-            break
-        }
-        if ($line -match '^<<<READY_ERROR msg=(.+)>>>$') {
-            $readyError = $Matches[1]
-            break
-        }
-        $startupLines += $line
-    }
+    # Guardar referencia do processo (para Disconnect e para detectar se a
+    # janela ja foi fechada pelo user). Nao esperamos pelo utilizador autenticar -
+    # retornamos imediatamente, o UI assume "a ligar" e o user faz o Connect
+    # na janela que abriu.
+    $readyInfo = @{ upn = '(pending - ver janela pwsh.exe)'; tenant = '' }
+    $startupLines = @(
+        "[INFO] pwsh.exe aberto num janela visivel.",
+        "[INFO] O popup Microsoft deve estar a aparecer nessa janela.",
+        "[INFO] Autentica-te nessa janela e volta aqui para usar os tools.",
+        "[INFO] A app assume 'ligado' assim que o popup aparecer."
+    )
 
     if ($readyInfo) {
         if ($Service -eq 'exo') {
@@ -927,58 +934,26 @@ function Invoke-ToolRequest {
             $includeRecov = [bool]$Params.includeRecov
             if (-not $raw) { throw 'Indique pelo menos um UPN.' }
 
-            # Requer sessao EXO persistente (botao Ligar no topo do modulo)
+            # Requer que o utilizador tenha clicado em "Ligar" primeiro (o que
+            # abre janela pwsh.exe visivel e autentica). Ai o token MSAL fica
+            # em cache local (%LOCALAPPDATA%\.IdentityService) e este tool corre
+            # um pwsh.exe hidden que faz Connect-ExchangeOnline SILENCIOSAMENTE
+            # via cache, depois faz o Get-MailboxStatistics.
             $sess = Test-M365Session -Service 'exo'
             if (-not $sess.connected) {
                 return @{ lines = @(
-                    '[ERR] Nao ha sessao Exchange Online activa.',
-                    '      Clica em "Ligar a Exchange Online" no topo antes de correr este tool.'
+                    '[ERR] Nao clicaste em "Ligar a Exchange Online" ainda.',
+                    '      Clica no botao Ligar no topo, autentica-te na janela pwsh.exe que abrir,',
+                    '      e volta aqui. Depois corre este tool.'
                 )}
             }
 
-            $upnList = $raw -split '[\r\n,;]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Select-Object -Unique
-            $allLines = @()
-            $allLines += "[INFO] Sessao activa como: $($sess.info.upn)"
-            $allLines += "[INFO] A consultar $($upnList.Count) mailbox(es)..."
-            $allLines += ''
-
-            foreach ($u in $upnList) {
-                # Construir script para o REPL - equivalente ao comando manual:
-                # Get-MailboxStatistics <upn> | Select-Object <campos>
-                $recClause = if ($includeRecov) {
-                    @"
-                    try {
-                        `$rec = Get-MailboxStatistics -Identity '$u' -FolderScope RecoverableItems -ErrorAction Stop
-                        "  RecoverableItems     : " + `$rec.TotalItemSize
-                    } catch {
-                        "  RecoverableItems     : (erro: " + `$_.Exception.Message + ")"
-                    }
-"@
-                } else { '' }
-
-                $ps = @"
-try {
-    `$s = Get-MailboxStatistics -Identity '$u' -ErrorAction Stop
-    "[OK] $u"
-    "  DisplayName          : " + `$s.DisplayName
-    "  UserPrincipalName    : $u"
-    "  StorageLimitStatus   : " + `$s.StorageLimitStatus
-    "  TotalItemSize        : " + `$s.TotalItemSize
-    "  TotalDeletedItemSize : " + `$s.TotalDeletedItemSize
-    "  ItemCount            : " + `$s.ItemCount
-    "  DeletedItemCount     : " + `$s.DeletedItemCount
-    "  LastLogonTime        : " + `$s.LastLogonTime
-$recClause
-} catch {
-    "[ERR] $u :: " + `$_.Exception.Message
-}
-""
-"@
-                $r = Invoke-M365Command -Service 'exo' -Script $ps -TimeoutSeconds 60
-                $allLines += $r.lines
-            }
-
-            return @{ lines = $allLines }
+            # Invocar audit-mailboxes.ps1 (spawn hidden, reusa MSAL cache)
+            $scriptPath = Join-Path $ToolsDir 'scripts\audit-mailboxes.ps1'
+            $p = @{ upns = $raw }
+            if ($includeRecov) { $p['includeRecov'] = $true }
+            $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters $p -TimeoutSeconds 600 -PreferPwsh
+            return @{ lines = $lines }
         }
 
         'SharePointSite' {
