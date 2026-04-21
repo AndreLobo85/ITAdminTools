@@ -1,6 +1,6 @@
 {
-  "version": "1.0.29",
-  "releaseName": "IT Admin Toolkit - Grupos AD streaming live + auto-Excel >50 users",
+  "version": "1.0.30",
+  "releaseName": "IT Admin Toolkit - Excel export robusto + auto-open via explorer.exe",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,11 +8,9 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "STREAMING LIVE: o terminal da app agora mostra cada linha do output enquanto o script esta a correr, em vez de esperar pelo fim. Util em auditorias grandes (6000+ users) onde dantes o user ficava a olhar para um terminal vazio ate ao fim. Ve progresso linha a linha",
-    "DECISAO AUTOMATICA para o output:",
-    " - Ate 50 users: mostra tabela completa no terminal (tabular, padded, copy-paste friendly)",
-    " - Mais de 50 users: auto-export Excel + sumario breve no terminal. Evita poluir terminal com milhares de linhas",
-    "Removido checkbox 'tableView' (agora e automatico). Checkbox 'export' renomeado para 'Forcar Excel (mesmo com <=50)' - forca geracao mesmo quando count cabe em tabela no terminal",
-    "Invoke-ScriptExternal passa a tail-folllow o ficheiro stdout em tempo real (FileShare.ReadWrite para ler enquanto o processo escreve)"
+    "Excel export refactorado: elimina o probe+release+re-create que em alguns setups corporativos deixava o Excel COM num estado inconsistente. Agora cria o Excel UMA so vez e reutiliza",
+    "Path do ficheiro aparece num bloco destacado apos criacao - impossivel nao notar: [OK] FICHEIRO CRIADO (XX KB): C:\\Users\\...",
+    "Auto-open com 4 niveis de fallback: explorer.exe (nova 1a tentativa, mais fiavel em ambientes corporativos) -> Invoke-Item -> Start-Process -> cmd /c start. Se TODAS falharem, path e impresso para abrir manual",
+    "Logging detalhado em cada passo do export. Se alguma coisa falhar saberemos exactamente onde"
   ]
 }

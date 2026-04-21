@@ -392,20 +392,23 @@ if ($export -and $auditRows.Count -gt 0) {
     if (-not $downloads) { $downloads = $env:TEMP }
     "[INFO] Pasta de destino: $downloads"
 
+    # Criar Excel UMA vez e reutilizar (evita probe + release + re-create
+    # que em alguns setups corporativos deixa Excel num estado inconsistente)
+    $excel = $null
     $useExcel = $false
+    "[INFO] A tentar abrir Excel COM..."
     try {
-        $probeExcel = New-Object -ComObject Excel.Application -ErrorAction Stop
+        $excel = New-Object -ComObject Excel.Application -ErrorAction Stop
         $useExcel = $true
-        try { $probeExcel.Quit() } catch {}
-        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($probeExcel) | Out-Null
-        "[INFO] Excel COM disponivel. A gerar .xlsx"
+        "[INFO] Excel COM criado com sucesso."
     } catch {
-        "[WARN] Excel COM indisponivel ($($_.Exception.Message)). Fallback para CSV."
+        "[WARN] Excel COM indisponivel: $($_.Exception.Message)"
+        "[WARN] Fallback para CSV."
     }
 
     if ($useExcel) {
         $outPath = Join-Path $downloads "$baseName.xlsx"
-        $excel = New-Object -ComObject Excel.Application
+        "[INFO] Target Excel path: $outPath"
         $excel.Visible = $false
         $excel.DisplayAlerts = $false
         try {
@@ -473,31 +476,53 @@ if ($export -and $auditRows.Count -gt 0) {
         }
     }
 
-    # Auto-open (multi-tentativa)
+    # Mensagem prominente do path (MESMO que o open falhe, user sabe onde esta)
     if ($outPath -and (Test-Path $outPath)) {
-        "[INFO] A abrir ficheiro..."
+        $fileSize = (Get-Item $outPath).Length
+        $sizeKB = [Math]::Round($fileSize / 1024, 1)
+        ""
+        "===================================================================="
+        "[OK] FICHEIRO CRIADO ($sizeKB KB):"
+        "     $outPath"
+        "===================================================================="
+
+        "[INFO] A tentar abrir automaticamente..."
         $opened = $false
-        # Tentativa 1: Invoke-Item (usa association do Windows)
-        try { Invoke-Item -LiteralPath $outPath -ErrorAction Stop; $opened = $true } catch {
-            "[WARN] Invoke-Item falhou: $($_.Exception.Message)"
-        }
-        # Tentativa 2: Start-Process
+        $opener = ''
+
+        # Tentativa 1: explorer.exe <path> (mais fiavel em corporate; respeita file associations)
+        try {
+            $null = & explorer.exe $outPath
+            $opened = $true; $opener = 'explorer.exe'
+        } catch { "[WARN] explorer.exe falhou: $($_.Exception.Message)" }
+
+        # Tentativa 2: Invoke-Item (ShellExecute)
         if (-not $opened) {
-            try { Start-Process -FilePath $outPath -ErrorAction Stop; $opened = $true } catch {
-                "[WARN] Start-Process falhou: $($_.Exception.Message)"
-            }
+            try { Invoke-Item -LiteralPath $outPath -ErrorAction Stop; $opened = $true; $opener = 'Invoke-Item' }
+            catch { "[WARN] Invoke-Item falhou: $($_.Exception.Message)" }
         }
-        # Tentativa 3: cmd /c start
+
+        # Tentativa 3: Start-Process
         if (-not $opened) {
-            try { & cmd /c start "" "`"$outPath`"" ; $opened = $true } catch {
-                "[WARN] cmd start falhou: $($_.Exception.Message)"
-            }
+            try { Start-Process -FilePath $outPath -ErrorAction Stop; $opened = $true; $opener = 'Start-Process' }
+            catch { "[WARN] Start-Process falhou: $($_.Exception.Message)" }
         }
+
+        # Tentativa 4: cmd /c start
+        if (-not $opened) {
+            try { & cmd /c start "" "`"$outPath`"" ; $opened = $true; $opener = 'cmd start' }
+            catch { "[WARN] cmd start falhou: $($_.Exception.Message)" }
+        }
+
         if ($opened) {
-            "[OK] Ficheiro aberto."
+            "[OK] Aberto via $opener. Se a app associada nao apareceu, abre manualmente no path acima."
         } else {
-            "[WARN] Nao consegui abrir automaticamente. Abre manualmente:"
+            "[WARN] Todas as tentativas de auto-open falharam. Abre o ficheiro manualmente:"
             "       $outPath"
         }
+    } elseif (-not $outPath) {
+        "[ERR] Nao foi criado nenhum ficheiro de export."
+    } else {
+        "[ERR] Ficheiro esperado nao existe no disco: $outPath"
     }
 }
