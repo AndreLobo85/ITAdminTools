@@ -96,6 +96,10 @@ const App = () => {
                     initialScriptId={view.scriptId}
                     onBack={goDashboard}/>
         )}
+
+        <div className="app-version-badge" title={lang==='pt'?'Versão da aplicação':'App version'}>
+          v{window.APP_VERSION || '?'}
+        </div>
       </div>
 
       <div className={"tweaks" + (tweaksOpen ? " open" : "")}>

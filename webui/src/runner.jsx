@@ -136,8 +136,12 @@ const Runner = ({ script, area, lang, onBack }) => {
   const [outputLines, setOutputLines] = useState([]);
   const [confirmingDanger, setConfirmingDanger] = useState(false);
 
-  // Reset when script changes
+  // Reset when script changes (inclui cancelar qualquer run em curso)
   useEffect(() => {
+    // Se havia um script a correr, cancela-o antes de mudar
+    if (running && window.bridge && window.bridge.available && window.bridge.cancelTool) {
+      window.bridge.cancelTool().catch(() => {});
+    }
     const init = {};
     script.params?.forEach(p => {
       init[p.id] = p.default !== undefined ? p.default : '';
@@ -146,6 +150,7 @@ const Runner = ({ script, area, lang, onBack }) => {
     setOutputLines([]);
     setConfirmingDanger(false);
     setStopping(false);
+    setRunning(false);
   }, [script.id]);
 
   const canRun = !running && (() => {

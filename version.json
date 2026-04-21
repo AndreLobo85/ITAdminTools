@@ -1,6 +1,6 @@
 {
-  "version": "1.0.8",
-  "releaseName": "IT Admin Toolkit - original script + 64-bit PS + diag header",
+  "version": "1.0.9",
+  "releaseName": "IT Admin Toolkit - external process + UI fixes",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,10 +8,10 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "tools/scripts/get-diag-info-aw2.ps1 passa a ser BYTE-A-BYTE identico ao script original fornecido (acentos preservados, sem return extra, comentarios originais)",
-    "Launchers (VBS + BAT) forcam PowerShell 5.1 64-bit via SysNative. Evita o WOW64 redirect que em certos PCs lancava a versao 32-bit, com comportamento AD diferente",
-    "Dispatcher UserInfo/GroupInfo imprime agora cabecalho de diagnostico: versao PS, bitness, PID, script path, comando exacto invocado, tempo de execucao",
-    "Se o script retornar zero linhas, aparece um aviso claro com causas provaveis (em vez de terminal vazio)",
-    "UI passa a mostrar o nome real do script (get-diag-info-aw2.ps1) em vez do label generico UserInfo.ps1"
+    "FIX RADICAL: UserInfo e GroupInfo ja nao correm dentro do processo da app. Em vez disso spawn um powershell.exe 64-bit separado (-NonInteractive) e capturam stdout/stderr. Equivalente exacto a abrir uma consola nova e correr o script - zero interferencia do contexto WebView2/runspace. Se isto nao funcionar, o problema e de ambiente (rede/AD/permissoes), nao da app",
+    "Run desbloqueado ao mudar de modulo: ao navegar para outro script enquanto um estava a correr, o estado 'a executar' ja nao fica preso. O run em curso e cancelado automaticamente",
+    "Cabecalho de diagnostico no output: comando exacto spawned, exit code, tempo de execucao",
+    "Version badge no canto inferior esquerdo mostra sempre a versao instalada",
+    "Launchers forcam PowerShell 5.1 64-bit via SysNative (evita WOW64 redirect para 32-bit)"
   ]
 }

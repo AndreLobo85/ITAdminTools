@@ -333,6 +333,122 @@ if ($__BoundParams -is [hashtable] -and $__BoundParams.Count -gt 0) {
     return ,$lines
 }
 
+# ========== Execucao externa: spawn de processo powershell.exe separado =========
+# Isola completamente o script do processo da app. Equivalente a abrir uma
+# consola nova e correr `powershell.exe -File script.ps1 -userName t05352`.
+# Forca PowerShell 5.1 64-bit (SysNative) para evitar WOW64 redirection.
+function Invoke-ScriptExternal {
+    param(
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [hashtable]$Parameters = @{},
+        [int]$TimeoutSeconds = 90
+    )
+
+    $lines = @()
+
+    if (-not (Test-Path -LiteralPath $ScriptPath)) {
+        return ,@("[ERR] Script nao encontrado: $ScriptPath")
+    }
+
+    # Resolve PowerShell.exe 64-bit.
+    $psExe = Join-Path $env:SystemRoot 'SysNative\WindowsPowerShell\v1.0\powershell.exe'
+    if (-not (Test-Path $psExe)) {
+        $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    }
+    if (-not (Test-Path $psExe)) {
+        return ,@("[ERR] powershell.exe nao encontrado")
+    }
+
+    # Construir argumentos - quotar valores com espacos
+    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-NonInteractive','-File',"`"$ScriptPath`"")
+    foreach ($k in $Parameters.Keys) {
+        $v = [string]$Parameters[$k]
+        $argList += "-$k"
+        $argList += "`"$v`""
+    }
+    $argStr = $argList -join ' '
+
+    $lines += "[DIAG] Executar processo externo:"
+    $lines += "       $psExe $argStr"
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = $psExe
+    $psi.Arguments = $argStr
+    $psi.UseShellExecute        = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+    $psi.CreateNoWindow         = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding  = [System.Text.Encoding]::UTF8
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+
+    $stdoutSb = New-Object System.Text.StringBuilder
+    $stderrSb = New-Object System.Text.StringBuilder
+    $outEvent = Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived `
+        -MessageData $stdoutSb -Action {
+            if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
+        }
+    $errEvent = Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived `
+        -MessageData $stderrSb -Action {
+            if ($EventArgs.Data -ne $null) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
+        }
+
+    try {
+        $startT = [datetime]::UtcNow
+        [void]$proc.Start()
+        $proc.BeginOutputReadLine()
+        $proc.BeginErrorReadLine()
+        $exited = $proc.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $exited) {
+            try { $proc.Kill() } catch {}
+            $lines += "[ERR] Timeout apos ${TimeoutSeconds}s. Processo terminado forcosamente."
+            return ,$lines
+        }
+        # Pequena espera para flush assincrono
+        $proc.WaitForExit()
+        Start-Sleep -Milliseconds 80
+        $elapsed = [int]([datetime]::UtcNow - $startT).TotalMilliseconds
+        $exitCode = $proc.ExitCode
+        $lines += "[DIAG] Exit code: $exitCode  |  Duracao: ${elapsed}ms"
+        $lines += ''
+    } finally {
+        try { Unregister-Event -SourceIdentifier $outEvent.Name -Force -ErrorAction SilentlyContinue } catch {}
+        try { Unregister-Event -SourceIdentifier $errEvent.Name -Force -ErrorAction SilentlyContinue } catch {}
+        try { $proc.Dispose() } catch {}
+    }
+
+    $stdout = $stdoutSb.ToString()
+    $stderr = $stderrSb.ToString()
+
+    $bodyCount = 0
+    if ($stdout) {
+        foreach ($line in ($stdout -split "`r?`n")) {
+            # Nao descartar linhas vazias - o script usa-as como separadores visuais
+            if ($line -ne $null) { $lines += $line; $bodyCount++ }
+        }
+        # Trim trailing empty line (do split final "`n")
+        if ($lines.Count -gt 0 -and $lines[-1] -eq '') { $lines = $lines[0..($lines.Count-2)] }
+    }
+    if ($stderr -and $stderr.Trim()) {
+        $lines += ''
+        $lines += '[DIAG] stderr:'
+        foreach ($line in ($stderr -split "`r?`n")) {
+            if ($line.Trim()) { $lines += "  $line" }
+        }
+    }
+
+    if ($bodyCount -eq 0 -and (-not $stderr -or -not $stderr.Trim())) {
+        $lines += '[WARN] O script correu mas nao produziu qualquer output nem erro.'
+        $lines += '       Na consola PS, o mesmo comando funciona?'
+        $lines += '       Se sim, ha algo no ambiente do spawn (variaveis de sessao, perfil, etc.)'
+    }
+
+    Write-AppLog "External done: exit=$exitCode  stdoutChars=$($stdout.Length)  stderrChars=$($stderr.Length)"
+    return ,$lines
+}
+
 # ========== Execucao inline: corre script na thread principal (UI freeze) ==========
 # Usado para scripts curtos (AD lookups ~3s). Nao tem cancelamento, mas e
 # MUITO mais fiavel que o runspace - nao depende de DoEvents nem de
@@ -404,99 +520,20 @@ function Invoke-ToolRequest {
             $email    = if ($Params.email) { [string]$Params.email } else { '' }
             if (-not $username -and -not $email) { throw 'Indique username ou email.' }
             $scriptPath = Join-Path $ToolsDir 'scripts\get-diag-info-aw2.ps1'
-            if (-not (Test-Path $scriptPath)) { throw "Script nao encontrado: $scriptPath" }
             $p = @{}
             if ($username) { $p['userName'] = $username }
             if ($email)    { $p['email']    = $email }
-
-            # Diagnostico visivel: confirma host, bitness e parametros antes
-            # de correr. Se o utilizador voltar a ver "nada", vai pelo menos
-            # ver estas linhas e sabemos o estado do host.
-            $bits = if ([IntPtr]::Size -eq 8) { '64-bit' } else { '32-bit' }
-            $dLines = @()
-            $dLines += "[DIAG] Host PowerShell $($PSVersionTable.PSVersion) $bits | PID $PID"
-            $dLines += "[DIAG] Script: $scriptPath"
-            $callStr = (($p.GetEnumerator() | ForEach-Object { "-$($_.Key) '$($_.Value)'" }) -join ' ')
-            $dLines += "[DIAG] Invocar: & `$scriptPath $callStr"
-
-            Write-AppLog "UserInfo inline start: $scriptPath $callStr"
-            $startT = [datetime]::UtcNow
-            try {
-                $raw = & $scriptPath @p *>&1
-            } catch {
-                Write-AppLog "UserInfo inline threw: $($_.Exception.Message)"
-                $errLines = Format-PSErrorRecord $_
-                return @{ lines = ($dLines + $errLines) }
-            }
-            $elapsed = [int]([datetime]::UtcNow - $startT).TotalMilliseconds
-            $dLines += "[DIAG] Script terminou em ${elapsed}ms"
-            $dLines += ''
-
-            $bodyLines = @()
-            foreach ($item in $raw) {
-                if ($item -is [System.Management.Automation.ErrorRecord]) {
-                    foreach ($el in (Format-PSErrorRecord $item)) { $bodyLines += $el }
-                } elseif ($item -is [System.Management.Automation.WarningRecord]) {
-                    $bodyLines += "[WARN] $($item.Message)"
-                } else {
-                    $bodyLines += "$item"
-                }
-            }
-
-            if ($bodyLines.Count -eq 0) {
-                $bodyLines += '[WARN] O script retornou zero linhas.'
-                $bodyLines += '       Causas provaveis:'
-                $bodyLines += '       - Parametro -userName nao fez bind (script entrou no caminho vazio)'
-                $bodyLines += '       - Utilizador nao existe no AD'
-                $bodyLines += '       - Sem ligacao ao dominio (tenta "nltest /dsgetdc:" na consola)'
-            }
-
-            Write-AppLog "UserInfo inline done: ${elapsed}ms  bodyLines=$($bodyLines.Count)"
-            return @{ lines = ($dLines + $bodyLines) }
+            # Spawn powershell.exe 64-bit em processo separado (isolado da app)
+            $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters $p -TimeoutSeconds 90
+            return @{ lines = $lines }
         }
 
         'GroupInfo' {
             $g = [string]$Params.groupName
             if (-not $g) { throw 'Indique o nome do grupo.' }
             $scriptPath = Join-Path $ToolsDir 'scripts\get-diag-info-group.ps1'
-            if (-not (Test-Path $scriptPath)) { throw "Script nao encontrado: $scriptPath" }
-
-            $bits = if ([IntPtr]::Size -eq 8) { '64-bit' } else { '32-bit' }
-            $dLines = @()
-            $dLines += "[DIAG] Host PowerShell $($PSVersionTable.PSVersion) $bits | PID $PID"
-            $dLines += "[DIAG] Script: $scriptPath"
-            $dLines += "[DIAG] Invocar: & `$scriptPath -groupName '$g'"
-
-            Write-AppLog "GroupInfo inline start: $scriptPath -groupName $g"
-            $startT = [datetime]::UtcNow
-            try {
-                $raw = & $scriptPath -groupName $g *>&1
-            } catch {
-                Write-AppLog "GroupInfo inline threw: $($_.Exception.Message)"
-                $errLines = Format-PSErrorRecord $_
-                return @{ lines = ($dLines + $errLines) }
-            }
-            $elapsed = [int]([datetime]::UtcNow - $startT).TotalMilliseconds
-            $dLines += "[DIAG] Script terminou em ${elapsed}ms"
-            $dLines += ''
-
-            $bodyLines = @()
-            foreach ($item in $raw) {
-                if ($item -is [System.Management.Automation.ErrorRecord]) {
-                    foreach ($el in (Format-PSErrorRecord $item)) { $bodyLines += $el }
-                } elseif ($item -is [System.Management.Automation.WarningRecord]) {
-                    $bodyLines += "[WARN] $($item.Message)"
-                } else {
-                    $bodyLines += "$item"
-                }
-            }
-
-            if ($bodyLines.Count -eq 0) {
-                $bodyLines += '[WARN] O script retornou zero linhas.'
-            }
-
-            Write-AppLog "GroupInfo inline done: ${elapsed}ms  bodyLines=$($bodyLines.Count)"
-            return @{ lines = ($dLines + $bodyLines) }
+            $lines = Invoke-ScriptExternal -ScriptPath $scriptPath -Parameters @{ groupName = $g } -TimeoutSeconds 60
+            return @{ lines = $lines }
         }
 
         'ADGroupAuditor' {
@@ -742,6 +779,21 @@ $wv.add_CoreWebView2InitializationCompleted({
     $sender.CoreWebView2.SetVirtualHostNameToFolderMapping(
         'app.local', $WebUiDir, [Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind]::Allow
     )
+
+    # Injectar APP_VERSION antes de qualquer <script type=text/babel> correr
+    try {
+        $verPath = Join-Path $ScriptDir 'version.json'
+        $appVer = '?'
+        if (Test-Path $verPath) {
+            $verObj = Get-Content $verPath -Raw | ConvertFrom-Json
+            if ($verObj.version) { $appVer = [string]$verObj.version }
+        }
+        $injectJs = "window.APP_VERSION = '$appVer';"
+        [void]$sender.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync($injectJs)
+        Write-AppLog "APP_VERSION injectado: $appVer"
+    } catch {
+        Write-AppLog "Injeccao APP_VERSION falhou: $($_.Exception.Message)"
+    }
 
     # DevTools no arranque (util para debug; podes remover depois)
     # $sender.CoreWebView2.OpenDevToolsWindow()
