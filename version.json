@@ -1,6 +1,6 @@
 {
-  "version": "1.0.6",
-  "releaseName": "IT Admin Toolkit - script invocation via splat wrapper (param binding fix)",
+  "version": "1.0.7",
+  "releaseName": "IT Admin Toolkit - AD scripts via inline execution (reliability)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,8 +8,10 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX CRITICO: UserInfo/GroupInfo invocam agora o ficheiro .ps1 via wrapper `& $Path @BoundParams` em vez de AddCommand($path). AddCommand nem sempre resolve path absoluto como ExternalScript, o que fazia com que o parametro -userName nao fizesse bind ao param() do script, e o script caia no `if vazio`, retornando silenciosamente sem output (t05352 pesquisava e nao via nada)",
-    "Fallback diagnostico: se um script terminar sem output e sem erros, a app agora imprime o script/parametros passados e causas provaveis - deixa de haver terminal vazio sem pistas",
-    "Log adicional: outputCount registado no ficheiro %TEMP%\\ITAdminToolkit-Web-*.log para facilitar diagnostico"
+    "FIX CRITICO: UserInfo (Diagnostico de User AD) e GroupInfo (Diagnostico de Grupo AD) passam a correr de forma INLINE (sync no thread principal) em vez de runspace+BeginInvoke. O runspace estava a bloquear o pump de mensagens WebView2 e nada chegava ao terminal - o utilizador via o botao Stop mas nem Stop respondia (CANCEL_TOOL fazia timeout)",
+    "Consequencia: para AD lookups (~3 segundos) a UI fica brevemente congelada durante a execucao, mas o resultado aparece TODO no fim em vez de nada. Esta foi a decisao certa: fiabilidade > streaming para scripts curtos",
+    "Stop button continua disponivel apenas para MailboxStats (que precisa mesmo de runspace para o popup de autenticacao EXO / Graph)",
+    "Adicionado fallback diagnostico: se o script terminar com 0 linhas e 0 erros, a app imprime o path+parametros+causas provaveis (em vez de terminal vazio sem pistas)",
+    "Log adicional em %TEMP%\\ITAdminToolkit-Web-*.log para diagnostico remoto"
   ]
 }

@@ -177,13 +177,45 @@ if ($__BoundParams -is [hashtable] -and $__BoundParams.Count -gt 0) {
     $tag = if ($PSCmdlet.ParameterSetName -eq 'File') { $ScriptPath } else { '<scriptblock>' }
     Write-AppLog "Runspace start: $tag  params=$($Parameters | ConvertTo-Json -Compress -Depth 5)"
 
+    # Diagnosticos visiveis no terminal da app (chegam via streaming)
+    $bitness = if ([IntPtr]::Size -eq 8) { '64-bit' } else { '32-bit' }
+    Push-StreamLine "[DIAG] Host: PS $($PSVersionTable.PSVersion) $bitness, PID $PID, runspace apt=$($rs.ApartmentState)"
+    if ($PSCmdlet.ParameterSetName -eq 'File') {
+        Push-StreamLine "[DIAG] Script: $ScriptPath"
+        if ($Parameters -and $Parameters.Count -gt 0) {
+            $pStr = ($Parameters.GetEnumerator() | ForEach-Object { "-$($_.Key) '$($_.Value)'" }) -join ' '
+            Push-StreamLine "[DIAG] Parametros: $pStr"
+        }
+    }
+
+    # Output collection com input explicito (passar `$null` faz o binder de PS
+    # 5.1 resolver para a overload errada e em alguns casos o BeginInvoke
+    # devolve sem executar nada)
+    $inputColl = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
+    $inputColl.Complete()
     $output = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
-    $async  = $ps.BeginInvoke($null, $output)
+
+    Push-StreamLine "[DIAG] A chamar BeginInvoke..."
+    try {
+        $async = $ps.BeginInvoke($inputColl, $output)
+    } catch {
+        $msg = "[ERR] BeginInvoke lancou: $($_.Exception.Message)"
+        Write-AppLog $msg
+        Push-StreamLine $msg
+        try { $ps.Dispose() } catch {}
+        try { $rs.Close(); $rs.Dispose() } catch {}
+        $script:RunningPS = $null
+        $script:RunningRS = $null
+        return ,@($msg)
+    }
+    Push-StreamLine "[DIAG] Runspace a correr (state=$($ps.InvocationStateInfo.State))"
 
     # Loop nao-bloqueante: pumpa UI ate completar e faz streaming live
     # de cada nova linha de output para a UI (TOOL_LINE).
     $lastIdx = 0
     $errLastIdx = 0
+    $startT = [datetime]::UtcNow
+    $lastPingSec = -1
     while (-not $async.IsCompleted) {
         [System.Windows.Forms.Application]::DoEvents()
         # Stream output novo
@@ -197,6 +229,12 @@ if ($__BoundParams -is [hashtable] -and $__BoundParams.Count -gt 0) {
                 Push-StreamLine $eline
             }
             $errLastIdx++
+        }
+        # Heartbeat cada segundo — prova que o pump de UI esta a correr
+        $secElapsed = [int]([datetime]::UtcNow - $startT).TotalSeconds
+        if ($secElapsed -gt $lastPingSec -and $secElapsed -ge 2) {
+            $lastPingSec = $secElapsed
+            Push-StreamLine "[DIAG] ... t=${secElapsed}s state=$($ps.InvocationStateInfo.State) output=$($output.Count) errors=$($ps.Streams.Error.Count)"
         }
         Start-Sleep -Milliseconds 60
     }
@@ -295,6 +333,65 @@ if ($__BoundParams -is [hashtable] -and $__BoundParams.Count -gt 0) {
     return ,$lines
 }
 
+# ========== Execucao inline: corre script na thread principal (UI freeze) ==========
+# Usado para scripts curtos (AD lookups ~3s). Nao tem cancelamento, mas e
+# MUITO mais fiavel que o runspace - nao depende de DoEvents nem de
+# pumps de mensagens WebView2 no meio do BeginInvoke.
+function Invoke-ScriptInline {
+    param(
+        [Parameter(Mandatory)][string]$ScriptPath,
+        [hashtable]$Parameters = @{}
+    )
+
+    $lines = @()
+    if (-not (Test-Path -LiteralPath $ScriptPath)) {
+        $msg = "[ERR] Script nao encontrado: $ScriptPath"
+        Write-AppLog $msg
+        return ,@($msg)
+    }
+
+    $pStr = if ($Parameters -and $Parameters.Count -gt 0) {
+        ($Parameters.GetEnumerator() | ForEach-Object { "-$($_.Key) '$($_.Value)'" }) -join ' '
+    } else { '(nenhum)' }
+    Write-AppLog "Inline start: $ScriptPath  params=$pStr"
+
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        # `*>&1` redirige todos os streams (output+error+warning+verbose+info)
+        # para o success stream, que capturamos em $raw. Mesmo comportamento
+        # que correr `& .\script.ps1 -userName t05352 *>&1` numa consola.
+        $raw = & $ScriptPath @Parameters *>&1
+        foreach ($item in $raw) {
+            if ($item -is [System.Management.Automation.ErrorRecord]) {
+                foreach ($el in (Format-PSErrorRecord $item)) { $lines += $el }
+            } elseif ($item -is [System.Management.Automation.WarningRecord]) {
+                $lines += "[WARN] $($item.Message)"
+            } elseif ($item -is [System.Management.Automation.InformationRecord]) {
+                $lines += "$item"
+            } else {
+                $lines += "$item"
+            }
+        }
+    } catch {
+        foreach ($el in (Format-PSErrorRecord $_)) { $lines += $el }
+    } finally {
+        $ErrorActionPreference = $prevEAP
+    }
+
+    if ($lines.Count -eq 0) {
+        $lines += '[WARN] O script terminou sem output e sem erros.'
+        $lines += "       Script: $ScriptPath"
+        $lines += "       Parametros: $pStr"
+        $lines += '       Causas provaveis:'
+        $lines += '       - O valor pesquisado nao existe no AD'
+        $lines += '       - Sem ligacao ao dominio (tenta "nltest /dsgetdc:" numa consola PS)'
+    }
+
+    Write-AppLog "Inline done: lines=$($lines.Count)"
+    return ,$lines
+}
+
 # ========== Dispatcher: recebe (toolId, params) e devolve @{ lines = [...] } ==========
 function Invoke-ToolRequest {
     param([string]$ToolId, [hashtable]$Params)
@@ -311,7 +408,10 @@ function Invoke-ToolRequest {
             $p = @{}
             if ($username) { $p['userName'] = $username }
             if ($email)    { $p['email']    = $email }
-            $lines = Invoke-ScriptInRunspace -ScriptPath $scriptPath -Parameters $p
+            # Inline: AD lookup curto (~3s). UI freeze aceitavel, 100% fiavel
+            # (o runspace com BeginInvoke/DoEvents estava a bloquear o pump
+            # de mensagens WebView2 e nada chegava ao terminal)
+            $lines = Invoke-ScriptInline -ScriptPath $scriptPath -Parameters $p
             return @{ lines = $lines }
         }
 
@@ -320,7 +420,8 @@ function Invoke-ToolRequest {
             if (-not $g) { throw 'Indique o nome do grupo.' }
             $scriptPath = Join-Path $ToolsDir 'scripts\get-diag-info-group.ps1'
             if (-not (Test-Path $scriptPath)) { throw "Script nao encontrado: $scriptPath" }
-            $lines = Invoke-ScriptInRunspace -ScriptPath $scriptPath -Parameters @{ groupName = $g }
+            # Inline (ver comentario em UserInfo)
+            $lines = Invoke-ScriptInline -ScriptPath $scriptPath -Parameters @{ groupName = $g }
             return @{ lines = $lines }
         }
 
