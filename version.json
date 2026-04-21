@@ -1,6 +1,6 @@
 {
-  "version": "1.0.7",
-  "releaseName": "IT Admin Toolkit - AD scripts via inline execution (reliability)",
+  "version": "1.0.8",
+  "releaseName": "IT Admin Toolkit - original script + 64-bit PS + diag header",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,10 +8,10 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX CRITICO: UserInfo (Diagnostico de User AD) e GroupInfo (Diagnostico de Grupo AD) passam a correr de forma INLINE (sync no thread principal) em vez de runspace+BeginInvoke. O runspace estava a bloquear o pump de mensagens WebView2 e nada chegava ao terminal - o utilizador via o botao Stop mas nem Stop respondia (CANCEL_TOOL fazia timeout)",
-    "Consequencia: para AD lookups (~3 segundos) a UI fica brevemente congelada durante a execucao, mas o resultado aparece TODO no fim em vez de nada. Esta foi a decisao certa: fiabilidade > streaming para scripts curtos",
-    "Stop button continua disponivel apenas para MailboxStats (que precisa mesmo de runspace para o popup de autenticacao EXO / Graph)",
-    "Adicionado fallback diagnostico: se o script terminar com 0 linhas e 0 erros, a app imprime o path+parametros+causas provaveis (em vez de terminal vazio sem pistas)",
-    "Log adicional em %TEMP%\\ITAdminToolkit-Web-*.log para diagnostico remoto"
+    "tools/scripts/get-diag-info-aw2.ps1 passa a ser BYTE-A-BYTE identico ao script original fornecido (acentos preservados, sem return extra, comentarios originais)",
+    "Launchers (VBS + BAT) forcam PowerShell 5.1 64-bit via SysNative. Evita o WOW64 redirect que em certos PCs lancava a versao 32-bit, com comportamento AD diferente",
+    "Dispatcher UserInfo/GroupInfo imprime agora cabecalho de diagnostico: versao PS, bitness, PID, script path, comando exacto invocado, tempo de execucao",
+    "Se o script retornar zero linhas, aparece um aviso claro com causas provaveis (em vez de terminal vazio)",
+    "UI passa a mostrar o nome real do script (get-diag-info-aw2.ps1) em vez do label generico UserInfo.ps1"
   ]
 }

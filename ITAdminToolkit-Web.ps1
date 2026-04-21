@@ -408,11 +408,51 @@ function Invoke-ToolRequest {
             $p = @{}
             if ($username) { $p['userName'] = $username }
             if ($email)    { $p['email']    = $email }
-            # Inline: AD lookup curto (~3s). UI freeze aceitavel, 100% fiavel
-            # (o runspace com BeginInvoke/DoEvents estava a bloquear o pump
-            # de mensagens WebView2 e nada chegava ao terminal)
-            $lines = Invoke-ScriptInline -ScriptPath $scriptPath -Parameters $p
-            return @{ lines = $lines }
+
+            # Diagnostico visivel: confirma host, bitness e parametros antes
+            # de correr. Se o utilizador voltar a ver "nada", vai pelo menos
+            # ver estas linhas e sabemos o estado do host.
+            $bits = if ([IntPtr]::Size -eq 8) { '64-bit' } else { '32-bit' }
+            $dLines = @()
+            $dLines += "[DIAG] Host PowerShell $($PSVersionTable.PSVersion) $bits | PID $PID"
+            $dLines += "[DIAG] Script: $scriptPath"
+            $callStr = (($p.GetEnumerator() | ForEach-Object { "-$($_.Key) '$($_.Value)'" }) -join ' ')
+            $dLines += "[DIAG] Invocar: & `$scriptPath $callStr"
+
+            Write-AppLog "UserInfo inline start: $scriptPath $callStr"
+            $startT = [datetime]::UtcNow
+            try {
+                $raw = & $scriptPath @p *>&1
+            } catch {
+                Write-AppLog "UserInfo inline threw: $($_.Exception.Message)"
+                $errLines = Format-PSErrorRecord $_
+                return @{ lines = ($dLines + $errLines) }
+            }
+            $elapsed = [int]([datetime]::UtcNow - $startT).TotalMilliseconds
+            $dLines += "[DIAG] Script terminou em ${elapsed}ms"
+            $dLines += ''
+
+            $bodyLines = @()
+            foreach ($item in $raw) {
+                if ($item -is [System.Management.Automation.ErrorRecord]) {
+                    foreach ($el in (Format-PSErrorRecord $item)) { $bodyLines += $el }
+                } elseif ($item -is [System.Management.Automation.WarningRecord]) {
+                    $bodyLines += "[WARN] $($item.Message)"
+                } else {
+                    $bodyLines += "$item"
+                }
+            }
+
+            if ($bodyLines.Count -eq 0) {
+                $bodyLines += '[WARN] O script retornou zero linhas.'
+                $bodyLines += '       Causas provaveis:'
+                $bodyLines += '       - Parametro -userName nao fez bind (script entrou no caminho vazio)'
+                $bodyLines += '       - Utilizador nao existe no AD'
+                $bodyLines += '       - Sem ligacao ao dominio (tenta "nltest /dsgetdc:" na consola)'
+            }
+
+            Write-AppLog "UserInfo inline done: ${elapsed}ms  bodyLines=$($bodyLines.Count)"
+            return @{ lines = ($dLines + $bodyLines) }
         }
 
         'GroupInfo' {
@@ -420,9 +460,43 @@ function Invoke-ToolRequest {
             if (-not $g) { throw 'Indique o nome do grupo.' }
             $scriptPath = Join-Path $ToolsDir 'scripts\get-diag-info-group.ps1'
             if (-not (Test-Path $scriptPath)) { throw "Script nao encontrado: $scriptPath" }
-            # Inline (ver comentario em UserInfo)
-            $lines = Invoke-ScriptInline -ScriptPath $scriptPath -Parameters @{ groupName = $g }
-            return @{ lines = $lines }
+
+            $bits = if ([IntPtr]::Size -eq 8) { '64-bit' } else { '32-bit' }
+            $dLines = @()
+            $dLines += "[DIAG] Host PowerShell $($PSVersionTable.PSVersion) $bits | PID $PID"
+            $dLines += "[DIAG] Script: $scriptPath"
+            $dLines += "[DIAG] Invocar: & `$scriptPath -groupName '$g'"
+
+            Write-AppLog "GroupInfo inline start: $scriptPath -groupName $g"
+            $startT = [datetime]::UtcNow
+            try {
+                $raw = & $scriptPath -groupName $g *>&1
+            } catch {
+                Write-AppLog "GroupInfo inline threw: $($_.Exception.Message)"
+                $errLines = Format-PSErrorRecord $_
+                return @{ lines = ($dLines + $errLines) }
+            }
+            $elapsed = [int]([datetime]::UtcNow - $startT).TotalMilliseconds
+            $dLines += "[DIAG] Script terminou em ${elapsed}ms"
+            $dLines += ''
+
+            $bodyLines = @()
+            foreach ($item in $raw) {
+                if ($item -is [System.Management.Automation.ErrorRecord]) {
+                    foreach ($el in (Format-PSErrorRecord $item)) { $bodyLines += $el }
+                } elseif ($item -is [System.Management.Automation.WarningRecord]) {
+                    $bodyLines += "[WARN] $($item.Message)"
+                } else {
+                    $bodyLines += "$item"
+                }
+            }
+
+            if ($bodyLines.Count -eq 0) {
+                $bodyLines += '[WARN] O script retornou zero linhas.'
+            }
+
+            Write-AppLog "GroupInfo inline done: ${elapsed}ms  bodyLines=$($bodyLines.Count)"
+            return @{ lines = ($dLines + $bodyLines) }
         }
 
         'ADGroupAuditor' {

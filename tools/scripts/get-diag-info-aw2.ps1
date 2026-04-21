@@ -1,17 +1,17 @@
 #--------------------------------------------------
 #
-# Versao 1.0 sem RSAT - @Vitor Rodrigues (2020-03-31)
-# Versao 1.1 sem RSAT - @Vitor Rodrigues (2020-04-02): PasswdLastSet Date, badPwdCount
-# Versao 1.2 sem RSAT - @Higino Antunes (2020-11-16)
-# Versao 1.3 sem RSAT - @Higino Antunes (2020-11-13): Department
-# Versao 1.4 sem RSAT - @Higino Antunes (2021-04-06): Manager + bugfix data expiracao
-# Versao 1.5 sem RSAT - @Higino Antunes (2021-04-16)
-# Versao 2.0 sem RSAT - @Vitor Rodrigues (2021-04-20): proxyAddresses, homeMDB, ManagerName, grupos
-# Versao 2.1 sem RSAT - @Higino Antunes (2021-04-26): whenCreated, UserPrincipalName
-# Versao 2.1 sem RSAT - @Higino Antunes (2021-04-28): AccountExpires
-# Versao 2.2 sem RSAT - @Higino Antunes (2021-05-05): mailNickName
-# Versao 2.3 sem RSAT - @Higino Antunes (2021-06-24): Title
-# Versao 2.4 sem RSAT - @Higino Antunes (2023-01-09): SamAccountName
+# Versão 1.0 sem RSAT - @Vitor Rodrigues (2020-03-31)
+# Versão 1.1 sem RSAT - @Vitor Rodrigues (2020-04-02): Adicionei PasswdLastSet Date e corrigi o badPwdCount
+# Versão 1.2 sem RSAT - @Higino Antunes (2020-11-16) : Adaptado do script get-diag-info-aw1.ps1 para contas privilegiadas e de serviço. Foi buscar também Organization (o), lastLogonTimestamp e permite output se a conta não expirar.
+# Versão 1.3 sem RSAT - @Higino Antunes (2020-11-13) : Adicionei Department
+# Versão 1.4 sem RSAT - @Higino Antunes (2021-04-06) : Adicionei Manager e corrigi bug no if da data de expiração da password
+# Versão 1.5 sem RSAT - @Higino Antunes (2021-04-16) : Adicionei Manager e corrigi bug no if da data de expiração da password
+# Versão 2.0 sem RSAT - @Vitor Rodrigues (2021-04-20): Corrigido bug no if da data de expiração da password, adição de: proxyAddresses, homeMDB, ManagerName, grupos
+# Versão 2.1 sem RSAT - @Higino Antunes (2021-04-26) : Adicionei whenCreated e UserPrincipalName
+# Versão 2.1 sem RSAT - @Higino Antunes (2021-04-28) : Adicionei AccountExpires
+# Versão 2.2 sem RSAT - @Higino Antunes (2021-05-05) : Adicionei mailNickName
+# Versão 2.3 sem RSAT - @Higino Antunes (2021-06-24) : Adicionei Title
+# Versão 2.4 sem RSAT - @Higino Antunes (2023-01-09) : Adicionei SamAccountName
 #
 #--------------------------------------------------
 
@@ -21,16 +21,19 @@ Trap {"Error: $_"; Break;}
 
 if (($email -eq "") -and ($userName -eq "")) {
 "
-.\get-diag-info-aw2.ps1 -userName B26467  -> Info por username
-.\get-diag-info-aw2.ps1 -email vitor.macieira.rodrigues@novobanco.pt  -> Info por email
+.\get-diag-info-aw2.ps1 -userName B26467  -> Para saber a informação de um determinado utilizador por username
+.\get-diag-info-aw2.ps1 -email vitor.macieira.rodrigues@novobanco.pt  -> Para saber a informação de um determinado utilizador por email
 "
-    return
+
+
 }
 
 $ACCOUNTDISABLE       = 0x000002
 $DONT_EXPIRE_PASSWORD = 0x010000
 $PASSWORD_EXPIRED     = 0x800000
 $LOCKOUT              = 0x000010
+
+
 
 $D = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain()
 $Domain = [ADSI]"LDAP://$D"
@@ -73,6 +76,10 @@ $Searcher.PropertiesToLoad.Add("AccountExpires") > $Null
 $Searcher.PropertiesToLoad.Add("mailNickName") > $Null
 $Searcher.PropertiesToLoad.Add("msExchRemoteRecipientType") > $Null
 
+
+
+
+# Create hash table of users and their last logon dates.
 $arrUsers = @{}
 
 $DC = $D.DomainControllers[0]
@@ -93,7 +100,9 @@ if ($Result = $Results[0]) {
 
         $LockedOut += [bool](([adsi]$ResultT.Properties.adspath[0]).userAccountControl[0] -band $LOCKOUT)
         $badPwdCount += ([adsi]$ResultT.Properties.adspath[0]).badPwdCount
+
     }
+
 
     try {
         $S2 = New-Object System.DirectoryServices.DirectorySearcher
@@ -120,10 +129,13 @@ if ($Result = $Results[0]) {
         $x1 = ($Result.Properties.Item("memberof") -like "*GO365PRO*").split(",")
         ($lixo, $goffice) = $x1[0].split("=")
     } else {
-        $goffice = "Nao tem licenca!"
+        $goffice = "Não tem licença!"
     }
 
+
+
     ""
+
     "---------------------------------------------"
     "Name                 : " + $Result.Properties.Item("name")
     "SamAccountName       : " + $Result.Properties.Item("SamAccountName")
@@ -141,20 +153,21 @@ if ($Result = $Results[0]) {
     "alternativos         : " + $pa
     "Database             : " + ($Result.Properties["homeMDB"] -replace "CN=(\w+),.+", '$1')
     "---------------------------------------------"
-    "Ultimo Logon         : " + [datetime]::fromfiletime($Result.Properties.Item("lastLogonTimestamp")[0]).ToString('yyyy-MM-dd HH:mm')
+    "Último Logon         : " + [datetime]::fromfiletime($Result.Properties.Item("lastLogonTimestamp")[0]).ToString('yyyy-MM-dd HH:mm')
     "enabled              : " + (-not (([adsi]$Result.Properties.adspath[0]).userAccountControl[0] -band $ACCOUNTDISABLE))
     "PasswordExpired      : " + [bool](([adsi]$Result.Properties.adspath[0]).userAccountControl[0] -band $PASSWORD_EXPIRED)
     "PasswordLastSet      : " + [datetime]::fromfiletime($Result.Properties.Item("pwdLastSet")[0]).ToString('yyyy-MM-dd HH:mm')
-    If ([bool](([adsi]$Result.Properties.adspath[0]).userAccountControl[0] -band $DONT_EXPIRE_PASSWORD)) {"Password expira em   : Nao expira" }
+    If ([bool](([adsi]$Result.Properties.adspath[0]).userAccountControl[0] -band $DONT_EXPIRE_PASSWORD)) {"Password expira em   : Não expira" }
     else {"Password expira em   : " + [datetime]::fromfiletime($Result.Properties.Item("msDS-UserPasswordExpiryTimeComputed")[0]).ToString('yyyy-MM-dd HH:mm') }
     "LockedOut            : " + $LockedOut
     "badPwdCount          : " + $badPwdCount
     "Criado em            : " + $Result.Properties.Item("whenCreated").ToLocalTime().ToString("yyyy-MM-dd HH:mm")
-    if (($Result.Properties.Item("AccountExpires") -like 0)){
-        "User expira  em      : NAO EXPIRA"
-    }
-    elseif (($Result.Properties.Item("AccountExpires") -eq [int64]::MaxValue)) {
-        "User expira  em      : NAO EXPIRA"
+     if (($Result.Properties.Item("AccountExpires") -like 0)){
+        "User expira  em      : NÃO EXPIRA"
+        }
+     elseif
+        (($Result.Properties.Item("AccountExpires") -eq [int64]::MaxValue)) {
+        "User expira  em      : NÃO EXPIRA"
     }
     else {"User expira em       : " + [datetime]::fromfiletime($Result.Properties.Item("AccountExpires")[0]).ToString('yyyy-MM-dd HH:mm') }
     "---------------------------------------------"
@@ -165,8 +178,10 @@ if ($Result = $Results[0]) {
     "Grupo Cond Access L       : " + (($Result.Properties.Item("memberof") -like "*GO365CALNR*").Count -eq 1)
     "Grupo Lic Office          : " + $goffice
     "User Princpal Name        : " + $Result.Properties.Item("userPrincipalName")
+
     "---------------------------------------------"
-    "Acede ao PAM?        : " + $(if ($grupos -match "GPAMNR") {"Sim"} else {"Nao"})
+    "Acede ao PAM?        : " + $(if ($grupos -match "GPAMNR") {"Sim"} else {"Não"})
     "Grupos               : " + $grupos
     "---------------------------------------------"
+
 }

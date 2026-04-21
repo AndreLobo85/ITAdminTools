@@ -6,7 +6,7 @@
 const ONPREM_MODULES = [
   {
     id: 'UserInfo',
-    file: 'UserInfo.ps1',
+    file: 'get-diag-info-aw2.ps1',
     cat: 'Active Directory',
     icon: 'users',
     name: { pt: 'Diagnóstico de User AD', en: 'AD User Diagnostics' },
@@ -63,7 +63,7 @@ const ONPREM_MODULES = [
   },
   {
     id: 'GroupInfo',
-    file: 'GroupInfo.ps1',
+    file: 'get-diag-info-group.ps1',
     cat: 'Active Directory',
     icon: 'shield',
     name: { pt: 'Diagnóstico de Grupo AD', en: 'AD Group Diagnostics' },
