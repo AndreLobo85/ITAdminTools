@@ -608,8 +608,11 @@ function Start-M365Repl {
         return @{ ok = $false; lines = @("[ERR] Script REPL nao encontrado: $scriptPath") }
     }
 
-    # Build args
-    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$scriptPath)
+    # Build args.
+    # IMPORTANTE: -STA forca Single-Threaded Apartment, necessario para
+    # popups WinForms/MSAL do Connect-ExchangeOnline abrirem. Sem -STA,
+    # pwsh.exe por default corre MTA e o popup falha silenciosamente.
+    $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-STA','-File',$scriptPath)
     if ($UseDeviceCode) { $argList += '-useDeviceCode' }
     foreach ($k in $Extra.Keys) {
         $v = [string]$Extra[$k]

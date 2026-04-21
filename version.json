@@ -1,6 +1,6 @@
 {
-  "version": "1.0.24",
-  "releaseName": "IT Admin Toolkit - FIX: botao Ligar EXO nao fazia nada (ArgumentList .NET Core)",
+  "version": "1.0.25",
+  "releaseName": "IT Admin Toolkit - FIX: popup Connect nao abria (precisa de -STA)",
   "releaseDate": "2026-04-21",
   "minWindows": "10.0.17763",
   "requires": {
@@ -8,6 +8,7 @@
     "powershell": "5.1"
   },
   "changelog": [
-    "FIX: botao Ligar ao Exchange Online lancava NullReferenceException silenciosamente. O meu codigo usava $psi.ArgumentList.Add(...) mas essa propriedade da ProcessStartInfo so existe em .NET Core / 5+; a app corre em PS 5.1 (.NET Framework 4.x) que tem apenas $psi.Arguments como string. Corrigido: construir a string com escape correcto de aspas e espacos"
+    "FIX: pwsh.exe do REPL EXO e agora lancado com -STA. Por default pwsh 7 corre em MTA (multi-thread), onde popups WinForms/MSAL falham silenciosamente. STA e obrigatorio para o popup do Connect-ExchangeOnline aparecer",
+    "Diagnostico extra no arranque do REPL: ApartmentState, UserInteractive, PID - se o popup ainda nao aparecer saberemos porque"
   ]
 }

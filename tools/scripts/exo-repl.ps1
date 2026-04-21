@@ -31,6 +31,9 @@ $ErrorActionPreference = 'Continue'
 function Emit-Line { param([string]$Line); [Console]::Out.WriteLine($Line); [Console]::Out.Flush() }
 
 Emit-Line "[DIAG] EXO REPL a iniciar (PS $($PSVersionTable.PSVersion))..."
+Emit-Line "[DIAG] ApartmentState: $([System.Threading.Thread]::CurrentThread.GetApartmentState())"
+Emit-Line "[DIAG] UserInteractive: $([System.Environment]::UserInteractive)"
+Emit-Line "[DIAG] PID: $PID"
 
 # ---- Load module ----
 if (-not (Get-Module -ListAvailable -Name ExchangeOnlineManagement)) {
